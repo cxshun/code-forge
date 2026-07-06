@@ -130,11 +130,11 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.7.4** 飞书 App 注册：录入 `app_id` + `app_secret`，维护多 App 列表
 - **F3.7.5** 会话历史查看（按 FeishuChat / session 维度）
 - **F3.7.6** **Memory 管理**：按 FeishuChat 维度列出 memory 文件，支持查看 / 编辑 / 删除
-- **F3.7.7** 用户账号管理（飞书 SSO 登录）
+- **F3.7.7** 用户账号管理：管理员创建 / 停用账号、重置密码、角色分配（自建账号密码体系，详见 design D32）
 
 ### 3.8 鉴权
 
-- **F3.8.1** 飞书 SSO 登录管理后台
+- **F3.8.1** 自建账号密码登录管理后台（username + password，详见 design D32）
 - **F3.8.2** **管理后台权限校验**：WS 配置 / Skill 上传 / Memory 管理等操作需 owner 校验（与飞书群内使用权解耦）
 - **F3.8.3** 广场资源权限校验（owner 才能编辑 / 删除）
 
@@ -152,6 +152,20 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.9.8** **长度建议**：单份 ≤ 2K token，超长时记录告警但正常加载（不截断）
 
 > 详见 design D24。
+
+### 3.10 可观测性（Observability）
+
+- **F3.10.1** **Trace 采集**：Agent Loop 全流程埋点，包括 Run 起 / 止、每次 Claude API 调用（request / response / usage / stream chunk）、每次 tool_use 执行（input / output / duration / 是否抢锁 / 是否越界拒绝）、skill invoke、子代理调用、中断 / 超时 / 错误 / 路径拒绝
+- **F3.10.2** **Span 树结构**：Trace 数据以 span 树组织，**1 Run = 1 trace（根 span）**，下挂 llm / tool / skill / subagent span，支持任意嵌套（子代理内可再嵌套）；span 类型含 run / llm / tool / skill / subagent / interrupt / error
+- **F3.10.3** **分层存储**：Span 元数据（token / 延迟 / cost / 状态 / 错误类型 / 工具名）入 PostgreSQL；完整大 payload（prompt / response / tool_result）落本地文件系统，PG 记录存文件路径引用；**Trace payload 与 Agent 会话历史（session JSONL）分离存储**（独立 traces/ 目录），互不污染
+- **F3.10.4** **流式响应采集**：支持 Claude API streaming 响应的 token usage 聚合（message_start 取 input / cache token，message_delta 累计 output，message_stop 取 final usage），边推飞书边累计 payload
+- **F3.10.5** **后台调试视图**：单 Run 的 span 瀑布图，支持展开 prompt / response / tool I/O（大文件分片流式返回）
+- **F3.10.6** **成本与性能聚合视图**：按 WS / FeishuChat / 时间段聚合 token 消耗、cost、延迟分布、工具耗时 TopN、单 Run 成本；cost 基于模型 pricing 表与 cache token 折算
+- **F3.10.7** **监控告警视图**：异常 Run 列表（error / timeout / interrupted）；可配置告警规则（错误率 / 超时率 / P95 延迟 / 单 Run cost / WS 日 cost 阈值），**内置默认规则集**，触发飞书通知
+- **F3.10.8** **非阻塞采集**：Trace 采集不得阻塞 Agent Loop 与飞书流式推送；采用内存缓冲 + 后台批写策略
+- **F3.10.9** **失败降级**：Trace 写入失败时缓冲丢弃 / 转入 fallback 文件，Agent 主流程不感知、不失败
+
+> 详见 design D25~D31 与 §7 可观测性详设。
 
 ---
 
@@ -187,6 +201,15 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **NF4.5.1** LLM 多模型可切换（抽象 Provider 层）
 - **NF4.5.2** 模块解耦，工具层 / Agent 内核 / 接入层独立演进
 
+### 4.6 可观测性
+
+- **NF4.6.1** **多租户隔离**：Trace 数据访问边界 = WS 边界，所有查询强制带 `ws_id` 过滤（ORM 层注入）；payload 文件读取必须先校验 WS 归属
+- **NF4.6.2** **敏感信息脱敏**：Trace payload 落盘前强制管线化脱敏（API key / token / 密码 / 私钥 / Bearer 等），对齐 NF4.2.3 的安全约束
+- **NF4.6.3** **数据保留策略**：Payload 文件默认保留 30 天，PG spans 默认 90 天，可配置；WS 删除时级联清理
+- **NF4.6.4** **大 payload 截断**：LLM request ≤ 5MB / response ≤ 10MB / tool 输出 ≤ 1MB，超限截断并标记 `payload_truncated`
+- **NF4.6.5** **采集性能开销**：Trace 埋点对单次工具调用的额外延迟 < 1ms（内存入队）；后台批写不与 Agent 抢 event loop
+- **NF4.6.6** **字段标准化**：Span 字段对齐 OpenTelemetry GenAI semantic conventions（`gen_ai.*`）和 anthropic usage 结构，预留 OTel 导出能力（未来扩展）
+
 ---
 
 ## 5. 约束与假设
@@ -213,3 +236,4 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - 私聊场景
 - 跨 WS 数据共享
 - AGENT.md 的多 repo 拼接 / 优先级裁剪（MVP 仅加载当前 cwd 那一份）
+- 可观测性的质量评估 / 模型对比 / OTel 导出（P2 预留，字段已对齐 OTel gen_ai.*）

@@ -121,8 +121,10 @@ erDiagram
   │   │   ├── feedback_*.md         # 反馈与纠正
   │   │   ├── project_*.md          # 项目动态
   │   │   └── reference_*.md        # 外部系统指针
-  │   └── sessions/                 # 会话历史(JSONL)
-  │       └── {session_id}.jsonl
+  │   ├── sessions/                 # 会话历史(JSONL)
+  │   │   └── {session_id}.jsonl
+  │   └── traces/                   # Trace payload(可观测性,详见 D29 / §7)
+  │       └── {trace_id}/           # 1 Run 1 子目录(LLM/tool/skill 各 span 的 payload 文件)
   └── logs/
 
 /skills/{skill_id}/                 # 全局广场(跨 WS 共享)
@@ -540,6 +542,87 @@ WS-Frontend 挂载 python-test Skill
 - 单份 AGENT.md 建议 ≤ 2K token（约 1500 字中文 / 6000 字符英文）
 - 超长时后端记录告警但仍正常加载（不强制截断，避免破坏指令完整性）
 
+### D25: 可观测性存储 = 自建（PG 结构化 + 文件 payload），不引入第三方平台
+
+- **理由**：Code Forge 强调多租户物理隔离（NF4.1），trace 数据含 prompt / 工具输入（可能含代码片段），送第三方平台（Langfuse / LangSmith 云版）有数据外泄风险；自建可完全控制 TTL / 脱敏 / 多租户边界；且 PG + 本地文件系统已是现有栈，无新依赖
+- **方案**：
+  - 结构化元数据（token / 延迟 / cost / 状态 / 错误）入 PostgreSQL `spans` 表（D27）
+  - 完整大 payload（prompt / response / tool_result）落本地文件系统 `chats/{feishu_chat_id}/traces/{trace_id}/`（D29）
+  - PG 记录只存 `payload_ref` 文件路径引用
+  - 字段对齐 OpenTelemetry GenAI semantic conventions（`gen_ai.*`）+ anthropic usage，便于未来导出 OTel
+- **详设**：§7.2 / §7.5
+
+### D26: 采集粒度 = 分层（元数据入 PG，大 payload 落文件）
+
+- **理由**：大 payload（Bash 输出、流式响应）塞 PG 会导致表膨胀、查询变慢；分层后结构化数据可高效聚合，大 payload 按需懒加载
+- **方案**：
+  - PG `spans` 表只存元数据 + token 计数 + cost + 状态 + 错误 + payload 文件引用
+  - 完整 prompt / response / tool_result 落文件，管理后台调试时按需读取
+  - 大 payload 截断：LLM request ≤ 5MB / response ≤ 10MB / tool 输出 ≤ 1MB（NF4.6.4）
+- **详设**：§7.2 / §7.5
+
+### D27: Trace 数据模型 = span 树（单表自引用，支持任意嵌套）
+
+- **理由**：子代理（Agent 工具）会递归产生 LLM / 工具调用，span 树是最自然的表达；单表自引用避免 JOIN，字段统一便于聚合，根 span 即 Run，与「1 Session : 1 Run」（D23）严格对应
+- **方案**：
+  - 单表 `spans`，字段 `span_id` / `trace_id` / `parent_span_id` / `span_type` / `span_order`
+  - span 类型：`run`（根）/ `llm` / `tool` / `skill` / `subagent` / `interrupt` / `error`
+  - 与 `workspaces / feishu_chats / sessions / runs` 外键关联，CASCADE 删除
+  - span 树深度不限（子代理可嵌套子代理）
+- **详设**：§7.2
+
+### D28: 采集机制 = contextvars 传递 trace context + 内存缓冲后台批写
+
+- **理由**：异步 Agent Loop 中显式传 trace_id 会污染核心代码可读性；Python `contextvars` 在 asyncio task 间自动传递，埋点零侵入；trace 写入不能阻塞 Agent Loop 与飞书流式推送（NF4.3.1 首字节 ≤ 3s）
+- **方案**：
+  - 用 `contextvars` 维护 `current_span_id` / `current_trace_id`，`@asynccontextmanager` 的 `span()` 自动 enter / exit
+  - span 事件先进内存 `asyncio.Queue`，后台单协程批量 UPSERT 到 PG
+  - payload 文件写入交给 aiodisk 线程池，不阻塞 event loop
+  - streaming 响应：`message_start` 取 input / cache token → `message_delta` 累计 output → `message_stop` 取 final usage
+  - **降级**：缓冲满丢弃 / PG 故障写本地 fallback 文件 / tracer 异常 swallow；**observability 永远不拖垮 Agent**
+- **详设**：§7.3 / §7.4
+
+### D29: Trace payload = 独立 traces/ 目录，不与 session JSONL 混用
+
+- **理由**：session JSONL（D23）是 Agent 上下文历史的简化镜像（下次 Run 加载用），trace payload 是调试 / 分析用的完整原始数据（含 usage / cost / 全 prompt），两者消费方不同，混用会污染 Agent 上下文且格式混乱
+- **方案**：
+  - trace payload 落 `chats/{feishu_chat_id}/traces/{trace_id}/`，与 `sessions/` 并列
+  - session JSONL 保持现状（简化的 messages 数组），Agent 加载历史不受 trace 影响
+  - 两套数据独立 TTL：payload 30 天，PG spans 90 天（NF4.6.3）
+- **详设**：§7.5
+
+### D30: 敏感信息脱敏 = 落盘前管线化处理，不依赖 Agent 自觉
+
+- **理由**：对齐 NF4.2.3（Memory 不记敏感信息）的延伸——trace payload 比 Memory 更容易意外捕获密钥（如 Bash 执行 `env` / Read 配置文件）；必须强制管线化脱敏，而非靠 system prompt 提醒
+- **方案**：
+  - 在 `payload_writer` 层统一注入脱敏管线，所有 payload 落盘前过
+  - 支持结构化字段名匹配（password / api_key / secret / ...）+ 正则（AWS Key / Bearer / 私钥块 / GitHub token / Slack token / 连接串密码）
+  - 命中替换为 `***REDACTED***`，保留结构便于调试
+  - 规则可后台配置 + WS 级覆盖
+- **详设**：§7.6
+
+### D31: Trace 多租户隔离 = WS 边界，ORM 强制注入 ws_id 过滤
+
+- **理由**：trace 数据可能含代码片段、prompt、工具输入，泄露风险等同 WS 代码本身；必须延续 D5 / D17 的 WS 物理隔离原则（NF4.1）
+- **方案**：
+  - `spans` 表所有查询通过 SQLAlchemy event listener 强制注入 `WHERE workspace_id = :ws_id`
+  - API 层从用户 session 取 `ws_id`，不接受客户端传入（防越权）
+  - payload 文件读取必须先 PG 校验归属再读，禁直接拼路径（防路径穿越）
+  - WS 删除时 spans CASCADE + traces/ 目录递归删除
+- **详设**：§7.6
+
+### D32: 管理后台鉴权 = 自建账号密码（不接飞书 SSO）
+
+- **理由**：管理后台是企业内部运营工具，账号密码足以覆盖；接飞书 OAuth 会把后台身份绑死在飞书态上（飞书应用异常即无法登录后台），耦合不必要；自建账号数据自主、可控。飞书在 Code Forge 的角色是 **Agent 交互入口**（D7，WebSocket 收发消息 + 富卡片），不承担管理后台身份——两者彻底解耦
+- **方案**：
+  - `User` 表：username + password_hash（argon2 / bcrypt）+ role + status + created_at
+  - 登录 `POST /api/auth/login`（username + password）→ 校验密码 → 下发 HttpOnly Cookie session
+  - 邀请制（§5.1）：由管理员创建账号、分发初始密码；用户首次登录可改密
+  - 角色二分（§5.1 不做细粒度 RBAC）：管理员 / 普通用户
+  - 安全：密码 hash 不存明文、登录限流防爆破、session 过期 + 续期
+- **与 D21 的关系**：飞书群内「使用权」仍是无权限模型（拉群即用），后台「身份」走账号密码——入口权与后台身份两层互不依赖
+- **接口**：详见 [api.md](./api.md) §2
+
 ---
 
 ## 5. 模块清单
@@ -552,7 +635,8 @@ WS-Frontend 挂载 python-test Skill
 | M4 | 工作空间管理 | 目录隔离、Git clone、workspace.toml、FeishuChat 隔离 |
 | M5 | 管理后台 | WS CRUD、飞书 App 注册、Skill 上传、MCP 配置、会话历史、Memory 管理 |
 | M6 | 持久化 | DB schema、Memory 文件组织、文件管理 |
-| M7 | 鉴权 | 飞书 SSO、后台账号 |
+| M7 | 鉴权 | 自建账号密码登录、角色二分、session 管理、用户账号生命周期（D32 / api.md §2） |
+| M8 | 可观测性 | Agent Loop 全流程 span 采集(Run/LLM/Tool/Skill/Subagent)、span 树持久化(PG+文件 payload)、流式 token 聚合、contextvars 异步上下文、后台批写降级、敏感信息脱敏、管理后台 Trace 瀑布图/成本聚合/监控告警、多租户 WS 隔离(详见 §7) |
 
 ### 5.1 内置工具清单（参考 Claude Code）
 
@@ -836,13 +920,278 @@ sequenceDiagram
 - **资源按需 Read**：模板 / 配置示例由 Agent 根据工作流读取，不预加载
 - **路径约定**：所有路径在 SKILL.md 正文里写明绝对路径（`/skills/{skill_id}/...`），Agent 不需要猜测
 
+### 6.8 Trace 采集与 span 树生成
+
+```mermaid
+sequenceDiagram
+    participant AL as Agent Loop
+    participant TR as Tracer(contextvars)
+    participant BUF as SpanBuffer(内存队列)
+    participant PG as PostgreSQL
+    participant FS as 文件系统(traces/)
+    participant FUI as 飞书(流式推送)
+
+    Note over AL: Run 启动(抢到 WS 锁后)
+    AL->>TR: span("run") enter → 根 span
+    loop 每轮主循环
+        AL->>TR: span("llm") enter
+        TR->>FS: 写 request payload(脱敏后)
+        AL->>AL: 调 Claude API(stream)
+        AL->>FUI: text_delta 推飞书(边流边推)
+        AL->>FS: text_delta 追加 response payload(aiodisk)
+        Note over TR: message_start 取 input/cache token<br/>message_stop 取 final usage
+        AL->>TR: span("llm") exit → 计算 cost
+        alt 含 tool_use
+            AL->>TR: span("tool") enter
+            alt 路径越界(D17)
+                TR->>TR: tool_path_rejected=true, status=error
+            else 正常执行
+                TR->>FS: 写 tool payload(脱敏后)
+            end
+            AL->>TR: span("tool") exit
+        else 无 tool_use
+            Note over AL: 最终回复 → 跳出循环
+        end
+    end
+    AL->>TR: span("run") exit → 关闭根 span
+    TR-->>BUF: span 事件(start/end)入队(非阻塞)
+    BUF-->>PG: 后台单协程批量 UPSERT
+    Note over BUF,PG: 失败降级:fallback 文件 / 丢弃,Agent 不感知
+```
+
+**关键点**：
+
+- **零侵入**：Agent Loop 只调 `span()` 上下文管理器，trace_id / parent_span_id 由 contextvars 自动传递，不污染核心代码
+- **边流边推边存**：Claude stream 的 text_delta 同时推飞书卡片 + 追加 payload 文件（aiodisk 不阻塞）
+- **非阻塞落盘**：span 事件进内存队列后台批写，payload 走线程池，Agent 主路径永不阻塞
+- **嵌套天然**：子代理 / asyncio task 自动继承父 contextvars，span 树深度不限
+- **详设**：§7.3
+
 ---
 
-## 7. 开发里程碑（建议）
+## 7. 可观测性详设
+
+> 决策摘要见 §4 D25~D31；采集流程概览见 §6.8。本节展开数据模型、采集细节、落盘降级、安全、管理后台与实施切片。
+>
+> **总原则**：可观测性是 best-effort——任何环节失败都不得拖垮 Agent Loop 或阻塞飞书流式推送。
+
+### 7.1 目标与边界
+
+**目标**：为 Agent Loop 每一步建立可追溯、可聚合、可观测的结构化轨迹，服务于：
+
+- **调试排查**：回放 bad case，看每步决策、工具调用、上下文累积
+- **成本与性能**：token 消耗、延迟分布、工具耗时、单 Run 成本
+- **监控告警**：错误率 / 超时率 / 异常 Run 实时发现并推送飞书
+
+**边界**：
+
+| 维度 | 决策 |
+|---|---|
+| 存储 | 自建（PG 结构化 + 文件 payload），不引入第三方平台（D25） |
+| 采集粒度 | 分层：元数据入 PG，大 payload 落文件（D26） |
+| 字段标准 | 对齐 OTel `gen_ai.*` + anthropic usage，预留 OTel 导出 |
+| 分析用途 | 调试 + 成本性能 + 监控告警；评测 / 模型对比暂不做（P2 预留） |
+
+### 7.2 Trace 数据模型
+
+**span 树**：所有执行步骤抽象为 span，组成一棵树——Run 是根 span，每次 LLM 调用 / 工具调用 / skill invoke / 子代理调用是子 span；子代理内部又会产生自己的 LLM / 工具 span，从而支持任意深度嵌套。**1 Run = 1 trace（根 span）**，与「1 Session : 1 Run」（D23）严格对应。
+
+**单表自引用**：用一张 `spans` 表 + `parent_span_id` 自引用表达整棵树（而非 trace 头表 + observation 子表）——根 span 即 Run、字段统一便于聚合、JOIN 少。MVP 单表 + 索引不分区，未来可按 `started_at` 月度分区平滑演进。
+
+**span 类型**：
+
+| span_type | 含义 | 触发点 |
+|---|---|---|
+| run | 根 span，1 Run = 1 run span | Run 启动（抢到 WS 锁后） |
+| llm | 一次 Claude API 调用 | Agent Loop 每轮调 Provider |
+| tool | 一次工具调用（内置 / MCP） | 解析到 tool_use |
+| skill | 一次 skill__invoke（加载 SKILL.md） | Agent 触发 skill 工具 |
+| subagent | 一次子代理调用，内可嵌套 | Agent 调 Agent 工具 |
+| interrupt | 中断事件 | 用户中断 / 超时 |
+| error | 错误标记（可选） | 异常路径 |
+
+> `skill` 单独成类型是因为它语义介于「工具调用」与「子流程」之间（只返回 SKILL.md 文本、不抢锁、无副作用），独立后便于分析 Skill 召回质量。
+
+**关键字段**（对齐 OTel GenAI semantic conventions + anthropic usage）：
+
+| 字段 | 说明 |
+|---|---|
+| span_id / trace_id / parent_span_id / span_order | 树结构与同父排序 |
+| status | running / ok / error / interrupted / timeout |
+| started_at / ended_at / duration_ms | 时间与耗时 |
+| provider / model / stop_reason | LLM 调用元信息 |
+| input_tokens / output_tokens / cache_read_input_tokens / cache_creation_input_tokens | token 计数（对齐 anthropic usage） |
+| tool_name / tool_input_summary / tool_output_summary | 工具调用摘要（摘要入库，全文落 payload 文件） |
+| tool_acquired_lock / tool_path_rejected | 是否抢 WS 锁（D20）/ 是否被路径校验拒绝（D17） |
+| cost_usd | 单 span 成本（llm span 必填） |
+| error_type / error_message | 错误分类与摘要 |
+| payload_ref / payload_size_bytes / payload_truncated | 完整 payload 文件路径与截断标记 |
+| attributes | 扩展属性（预留） |
+
+**租户边界**：每个 span 强制带 `workspace_id / feishu_chat_id / session_id / run_id` 四元外键，全部 `ON DELETE CASCADE`（WS 删除 → trace 全清，延续 NF4.1 物理隔离）。
+
+### 7.3 采集流程
+
+> 流程概览见 §6.8 的 sequenceDiagram。本节给出 context 传递、埋点位置与 streaming 聚合细节。
+
+**trace context 零侵入传递**：用 Python `contextvars` 维护「当前 span_id / trace_id」，采集点以 `span()` 上下文管理器包裹、自动 enter / exit——Agent 内核代码无需显式传 trace_id。asyncio task 自动继承父上下文，因此子代理天然嵌套；异常路径自动标记 error span。
+
+**埋点位置清单**：
+
+| 阶段 | span 类型 | 关键字段 |
+|---|---|---|
+| Run 启动 / 结束 / 异常 / 中断 / 超时 | run（+ interrupt） | status, error_type, 总 cost |
+| Claude API 调用前 / stream 各事件 / 调用结束 | llm | model, payload_ref, input/output/cache token, stop_reason, cost |
+| tool_use 解析后 / 路径拒绝 / 抢锁 / 执行完成 | tool | tool_name, tool_input_summary, tool_path_rejected, tool_acquired_lock, duration |
+| skill__invoke | skill | skill_id, 加载耗时 |
+| Agent 子代理调用 | subagent | 子代理内 span 经 parent_span_id 关联到本 span |
+
+**streaming token 聚合**（Claude stream 事件分布）：
+
+| 事件 | 处理 |
+|---|---|
+| message_start | 取 input_tokens + cache_read + cache_creation，一次性赋值 |
+| message_delta | 累计 output_tokens（实时显示，最终值以 message_stop 为准） |
+| text_delta | 同时推飞书卡片 + 追加 response payload 文件 |
+| message_stop | 取 final usage + stop_reason，覆盖最终值并计算 cost |
+
+**边推边存**：text_delta 一边推飞书富卡片（累计到阈值合并更新，避免飞书限流），一边异步追加到 payload 文件（aiodisk 线程池，不阻塞 event loop）。
+
+### 7.4 落盘与降级
+
+**非阻塞落盘**：span 事件先进内存队列（put 纳秒级，绝不阻塞 Agent Loop），后台单协程批量 UPSERT 到 PG；payload 文件写交给 aiodisk 线程池；streaming token 增量先在内存 span 对象累加，仅 span 结束时落一次最终值。Run 结束前同步 flush 本 trace 的剩余 span。
+
+**失败降级矩阵**（observability 是 best-effort，Agent 主流程永远优先）：
+
+| 失败 | 降级行为 |
+|---|---|
+| 缓冲队列满 | 丢弃 span 事件，记 warning |
+| PG 不可用 | 指数退避重试，仍失败则写本地 fallback 文件，下次启动重放 |
+| payload 文件写失败 | 该 span payload_ref 置空 + 标 truncated，Agent 不感知 |
+| tracer 抛异常 | 埋点 try/except swallow，只记本地日志 |
+| 单 batch 写超时 | 放弃该 batch 转入 fallback 文件 |
+
+### 7.5 Payload 存储与生命周期
+
+**目录结构**（融入 §2.3 的 `chats/{feishu_chat_id}/` 子树）：
+
+```
+/workspaces/{ws_id}/chats/{feishu_chat_id}/traces/{trace_id}/
+  ├── {span_id}.request.json     # LLM 请求 payload
+  ├── {span_id}.response.jsonl   # LLM 流式响应（追加）
+  ├── {span_id}.tool.json        # 工具输入输出
+  └── {span_id}.skill.json       # skill 加载的 SKILL.md
+```
+
+**与 session JSONL 的关系**（D29）：两者并列、不混用——
+
+| 数据 | 消费方 | 内容 | TTL |
+|---|---|---|---|
+| sessions/{session_id}.jsonl | Agent（下次 Run 加载上下文） | 简化 messages 数组 | 长期 |
+| traces/{trace_id}/ | 人 / 聚合（调试、成本、监控） | 完整 payload + usage + cost | 30 天 |
+
+混用会污染 Agent 上下文且格式混乱，因此独立目录、独立 TTL。
+
+**截断策略**：
+
+| payload 类型 | 上限 | 截断策略 |
+|---|---|---|
+| LLM request | 5 MB | 截 tools 数组末尾 + 最长 message content，保留 system prompt |
+| LLM response | 10 MB | 停止追加后续 delta，保留 token 计数 |
+| tool 输出（Bash 常见巨大） | 1 MB | stdout / stderr 各截 512 KB，中间标注截断量 |
+| skill | 200 KB | SKILL.md 有长度建议（D15），一般不截断 |
+
+**保留策略**：payload 文件默认 30 天、PG spans 默认 90 天（可配置）；每 FeishuChat 保留最近 1000 个 Run 的 payload；WS 删除时级联清理目录。
+
+### 7.6 安全
+
+**敏感信息脱敏**（D30，对齐 NF4.2.3）：所有 payload 落盘前在写入层统一过脱敏管线，不依赖 Agent 自觉。覆盖两类规则：
+
+- **结构化字段名匹配**：password / api_key / secret / access_key / auth_token / bearer / private_key / client_secret 等字段名，命中即整个值替换为 `***REDACTED***`
+- **正则模式匹配**：AWS Access Key、Generic API key、Bearer token、私钥块、GitHub token、Slack token、连接串密码
+
+命中后保留字段名与结构（调试时仍能看到「此处曾有 password」），只脱敏值。规则可后台配置 + WS 级覆盖。
+
+**多租户隔离**（D31）：trace 数据访问边界 = WS 边界。
+
+- ORM 层用 event listener 在所有 spans 查询强制注入 `WHERE workspace_id`，杜绝忘加过滤
+- API 层从用户 session 取 ws_id，不接受客户端传入（防越权）
+- payload 文件读取必须先 PG 校验 run_id 归属再读，禁直接拼路径（防路径穿越）
+- WS 删除时 spans CASCADE + traces/ 目录递归删除
+
+### 7.7 管理后台
+
+**路由**：
+
+- `/traces`：Run 列表（按 ws / chat / status / 时间筛选）
+- `/traces/:run_id`：单 Run 瀑布图（调试核心）
+- `/insights/cost`：成本与性能聚合
+- `/insights/tools`：工具耗时 TopN / 错误率
+- `/monitoring`：异常 Run + 告警规则配置
+
+**调试瀑布图**：横轴时间、纵轴 span 树的 Gantt 视图；选中 span 在右侧抽屉看基本信息 / token / cost / 错误，并内联展开 Request / Response / Tool I/O（大文件后端分片流式返回）；span 类型用颜色区分（llm 蓝 / tool 绿 / skill 紫 / subagent 橙 / error 红）。
+
+**成本与性能聚合**：指标卡（总 token / 总 cost / 平均 Run 耗时 / P95）+ 图表（每日 cost 趋势、token 分布、模型占比、工具耗时 TopN、单 Run 成本 TopN）；大跨度走物化视图，小跨度实时聚合，支持钻取到 Run。
+
+**监控告警**：异常 Run 列表（error / timeout / interrupted）+ 可配置规则。默认规则：
+
+| 规则 | 阈值 | 窗口 | 通知 |
+|---|---|---|---|
+| 高错误率 | > 10% | 1h | 飞书群 |
+| 高超时率 | > 5% | 1h | 飞书群 |
+| Run 延迟异常 | P95 > 5min | 1h | 飞书群 |
+| 单 Run 成本异常 | > $1 | 单 Run | 飞书群（实时） |
+| WS 日成本上限 | > $50 | 24h | 飞书群 + 后台 |
+
+后台定时任务（每 1 min 扫规则），命中后通过接入层推飞书卡片。
+
+### 7.8 实施切片
+
+| 阶段 | 范围 | 对应需求 |
+|---|---|---|
+| **P0** 最小可用（调试单 Run） | spans 表 + ORM + WS 隔离 listener；tracer + contextvars；SpanBuffer 批写 + fallback；Agent Loop 埋点（Run / LLM stream / Tool / Skill / 错误中断）；payload 写入 + 截断；脱敏管线；后台 Trace 列表 + 瀑布图（只读）+ payload 读取 API | F3.10.1~5 / NF4.6.1~4 |
+| **P1** 成本 / 监控 | cost 计算引擎（pricing 表 + cache 折算）；daily_run_stats 物化视图；成本聚合视图；监控视图；告警规则表 + 定时扫描 + 飞书通知；TTL 清理 | F3.10.6~7 |
+| **P2** 预留扩展 | OTel 导出；质量评估（eval_runs 关联）；模型对比；Trace 采样 | NF4.6.6 |
+
+---
+
+## 8. 管理后台接口设计
+
+> 完整接口清单见 [api.md](./api.md)。本节给出概览与通用约定。
+
+管理后台（Vue 3，M5）与后端（FastAPI）通过 RESTful HTTP 交互。飞书侧的 WebSocket 推送与富卡片不走本接口，由接入层独立承担。
+
+**接口域概览**：
+
+| 域 | 主要资源 | 典型路径 |
+|---|---|---|
+| 鉴权 | 账号密码 | /api/auth/login、/me |
+| 飞书 App | 自建应用凭证 | /feishu-apps |
+| 工作空间 | WS | /workspaces |
+| WS 内资源 | Repo / FeishuChat / 挂载 / AGENT.md | /workspaces/{ws_id}/repos、/chats、/skills、/agent-md |
+| 广场 | Skill / MCP | /skills、/mcps |
+| 会话历史 | Session | /workspaces/{ws_id}/sessions |
+| Memory | chat 级记忆文件 | /workspaces/{ws_id}/chats/{chat_id}/memory |
+| 可观测性 | Trace / Insights / Monitoring | /workspaces/{ws_id}/traces、/insights、/monitoring |
+
+**通用约定**（详见 api.md §1）：
+
+- **鉴权**：自建账号密码 + HttpOnly Cookie session（D32）
+- **多租户**：ws_id 一律放路径（`/workspaces/{ws_id}/...`），后端校验当前用户对该 WS 的权限；写操作与 trace 查询需 owner 校验（F3.8.2 / D31）
+- **统一响应**：成功返回资源（200 / 201 / 204），错误返回 4xx/5xx + `{ error: { code, message } }`
+- **分页**：`?page=&page_size=`，响应含 `items / total / page / page_size`
+- **异步任务**：长操作（git clone、WS 级联删除）返回 202 + task_id，轮询 `/tasks/{task_id}`
+- **敏感字段保护**：飞书 app_secret 列表 / 详情脱敏（仅创建时返回一次）；memory 文件名严格白名单防穿越（D17）
+
+接口细节（请求 / 响应、错误码、关键接口示例）见 [api.md](./api.md)。
+
+---
+
+## 9. 开发里程碑（建议）
 
 | 周 | 里程碑 | 关键产出 |
 |---|---|---|
 | Week 1-2 | 基础架构 | 多 App 飞书 WebSocket 接入、工作空间模型、Git clone、基础 Agent Loop、Thinking 反馈 |
 | Week 3-4 | 核心闭环 | 内置工具、飞书富卡片（含排队）、Session/Run 管理、FeishuChat 级目录隔离、WS 写锁 |
-| Week 5-6 | 后台 + 高级特性 | Vue 后台、Skill / MCP 动态管理、Memory 系统 |
-| Week 7+ | 测试 + 部署 | 端到端测试、邀请制上线 |
+| Week 5-6 | 后台 + 高级特性 | Vue 后台、**管理后台 API（[api.md](./api.md)）**、Skill / MCP 动态管理、Memory 系统、**可观测性 P0**（spans 表 + 采集埋点 + Trace 瀑布图） |
+| Week 7+ | 测试 + 部署 | 端到端测试、邀请制上线、**可观测性 P1**（成本聚合 + 监控告警） |
