@@ -84,6 +84,8 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.3.5** **取消 / 中断**：排队中可"取消排队"立即从队列移除；运行中可中断，信号传到 Agent Loop 异步中止
 - **F3.3.6** **超时保护**：单 Run 硬超时 10 分钟，超时后强制中止并释放锁
 - **F3.3.7** 1 个 Session = 1 个 Run（详见 design D23）
+- **F3.3.8** **并行子代理**：主 Agent 可在单 Run 内并行启动多个子代理（独立上下文窗口，仅回最终消息），用于可独立拆分的子任务；只读子代理天然并行，写型子代理复用父 Run 锁（详见 design D33）
+- **F3.3.9** **拆分判断责任**：主 Agent 负责判断子任务是否可安全并行（无写冲突 / 无强依赖），system prompt 提供拆分指导；存在冲突时串行（详见 design D33）
 
 ### 3.4 工具系统
 
@@ -189,6 +191,7 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **NF4.3.2** 单 WS 写操作串行（锁约束）；队列可容纳 ≥ 5 个等待 Run
 - **NF4.3.3** Skill invoke 加载延迟 ≤ 500ms（本地文件读取）
 - **NF4.3.4** AGENT.md 加载延迟 ≤ 200ms（Run 启动时本地文件读取 + 注入）
+- **NF4.3.5** 单 Run 并行子代理数默认上限 5（可配置），防 fork 爆炸与成本失控（详见 design D33）
 
 ### 4.4 可用性
 
@@ -236,4 +239,6 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - 私聊场景
 - 跨 WS 数据共享
 - AGENT.md 的多 repo 拼接 / 优先级裁剪（MVP 仅加载当前 cwd 那一份）
+- 并行子代理的 worktree 隔离（L2，design D33）—— MVP 用 L1 子代理并行 + 主 Agent 拆分判断兜底
+- 并行子代理的 Plan DAG 编排（L3，design D33）
 - 可观测性的质量评估 / 模型对比 / OTel 导出（P2 预留，字段已对齐 OTel gen_ai.*）

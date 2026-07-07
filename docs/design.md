@@ -412,11 +412,11 @@ WS-Frontend 挂载 python-test Skill
   | `skill__{name}` | ❌ | 仅加载内容到上下文 |
   | `WebFetch` / `WebSearch` | ❌ | 网络访问 |
   | `TaskList` 系列 | ❌ | Agent 内部 todos，无副作用 |
-  | `Agent`（子代理） | 看子任务 | 子代理调用上述工具时按规则判断 |
+  | `Agent`（子代理） | 可重入 | 复用父 Run 已持有的 `ws_lock`，不重复抢；子代理内写工具调用也不再单独抢锁（详见 D33） |
 
 - **生命周期**：
   - 入队：Run 创建后入队，尝试抢锁；抢不到则等待
-  - 持有：抢到锁后整个 Run 期间持有（不是单次工具调用粒度）
+  - 持有：抢到锁后整个 Run 期间持有（不是单次工具调用粒度）；Run 内启动的并行子代理**可重入**复用此锁、不重复抢（避免子代理间死锁，详见 D33）
   - 释放：`try / finally` 保证异常 / 中断 / 超时都释放
 - **超时**：硬上限 10 分钟（兜底防死锁；正常 Run < 5 min）
 - **中断**：
@@ -426,6 +426,7 @@ WS-Frontend 挂载 python-test Skill
   - ⏳ 入队时推送"排队中，前面 N 个"
   - ▶️ 抢到锁时推送"开始执行"
 - **理由**：MVP 简单粗暴；真实场景下同一 WS 并行触发概率不高，串行体验可接受；后续如成瓶颈可演进到 repo 级锁或 git worktree
+- **与 D33 的关系**：D20 保证 **Run 间**串行（同 WS 一次只跑一个 Run 的写临界区）；D33 解决 **Run 内**并行子代理——子代理可重入进入父 Run 临界区，只读天然并行，写型子代理之间不二次串行（依赖主 Agent 拆分时避免写冲突）。worktree 级锁是 P2 演进方向
 
 ### D21: 群聊权限 = 无权限模型（拉群即用）
 
@@ -623,6 +624,54 @@ WS-Frontend 挂载 python-test Skill
 - **与 D21 的关系**：飞书群内「使用权」仍是无权限模型（拉群即用），后台「身份」走账号密码——入口权与后台身份两层互不依赖
 - **接口**：详见 [api.md](./api.md) §2
 
+### D33: 并行子代理 = 单 Run 内主 Agent 拆分并行执行（L1），worktree 隔离 / DAG 编排预留（L2/L3）
+
+**定位**：当一条用户消息触发的任务可明确拆成多个独立子任务时，主 Agent 在 Run 内并行启动多个子代理，缩短端到端耗时。本决策解决 **Run 内** 并行；**Run 间** 串行仍由 D20 兜底。
+
+**与 D23 的关系**：不冲突。1 Session = 1 Run 不变；子代理不是独立 Run，而是 Run 内的子流程，复用父 Run 的锁与 trace（`subagent` span 挂在父 span 下，§7.2 已支持任意嵌套）。
+
+**与 D20 的关系（锁）**：子代理**可重入**进入父 Run 已持有的 `ws_lock:{ws_id}`，不重复抢锁——否则同 Run 的子代理会互相阻塞甚至死锁。代价：同一 Run 内多个**写型**子代理之间不二次串行，存在写同一文件的覆盖风险，由主 Agent 拆分判断兜底（见下）。
+
+**三层方案**：
+
+| 层级 | 机制 | 适用场景 | 状态 |
+|---|---|---|---|
+| **L1 子代理并行** | 主 Agent 一轮返回多个 `Agent` tool_use → `asyncio.gather` 并发执行 | 只读调研 / 读多写少 / 主 Agent 判断子任务无写冲突 | **MVP** |
+| **L2 Worktree 隔离** | 为每个写型子任务开 git worktree + 独立分支，锁细化到 worktree 级 | 真正并行改同一 repo 的不同模块 | P2 预留 |
+| **L3 Plan DAG 编排** | 主 Agent 产 Plan（依赖图），编排器按拓扑调度子代理 | 子任务有前后依赖的复杂编排 | P2 预留 |
+
+**L1 执行模型（MVP 落地）**：
+
+- **触发**：主 Agent 在一轮 LLM 响应里返回多个 `Agent` tool_use（Anthropic API 天然支持单 message 多 tool_use）
+- **执行**：Loop 用 `asyncio.gather` 并发拉起各子代理，而非 for 循环串行
+- **上下文**：子代理**独立上下文窗口**（独立 system prompt + 历史），完成后仅把**最终消息**作为 tool_result 回给主 Agent（不回流中间过程，省 token、防上下文污染）
+- **继承**：子代理继承当前 chat 的 `MEMORY.md` 索引 + WS 级 AGENT.md + 当前 cwd 的 Repo 级 AGENT.md（与父 Run 同源）
+- **锁**：子代理可重入复用父 Run 的 `ws_lock`；其内部写工具调用不单独抢锁；只读子代理天然并行
+- **trace**：每个子代理一个 `subagent` span，并列挂在父 span 下，内含各自的 llm / tool / skill span
+
+**主 Agent 拆分责任（system prompt 指导）**：
+
+- 只在子任务**相互独立**时并行拆分；存在写冲突或强依赖时串行
+- 偏好把**只读 / 调研类**子任务并行（收益高、零风险）
+- 写型子任务并行前，确认它们改动**不同文件 / 不同模块**
+- 拆分前可借助 Plan 确认卡片（spec F3.1.4）让用户确认方案
+
+**关键参数**：
+
+| 参数 | 取值 | 说明 |
+|---|---|---|
+| 并行度上限 | 默认 5（可配置） | 防止子代理 fork 爆炸与 token 成本失控；超限的 tool_use 排队 |
+| 失败处理 | 单个子代理失败 → 标记失败回给主 Agent，主 Agent 自主决定重试 / 跳过 / 终止 | 不一刀切整 Run 失败 |
+| 超时 | 子代理共享父 Run 的 10 min 硬上限预算（非各自 10 min） | 避免并行放大超时 |
+
+**L2 预留口子（不在 MVP 实现）**：
+
+- D17 路径校验、cwd、锁 key 设计上预留 worktree 后缀（`wt_lock:{ws_id}:{repo_id}:{worktree}`）
+- 子代理 cwd 可切换到 `repos/{repo_id}/worktrees/{agent}/`
+- 合并策略：自动 merge 失败 → 主 Agent 收口或上报用户
+
+**理由**：L1 几乎零架构成本即可覆盖 80% 并行场景（调研、读多写少），是性价比最高的起点；L2 解决"并行改同一 repo"的硬骨头，但合并冲突 / worktree 生命周期管理复杂度高，等真有刚需再做；L3 是远期工作流能力，Plan 确认卡片为其铺路。
+
 ---
 
 ## 5. 模块清单
@@ -630,7 +679,7 @@ WS-Frontend 挂载 python-test Skill
 | 优先级 | 模块 | 职责 |
 |---|---|---|
 | M1 | 飞书接入层 | 多 App WebSocket 长连接池、消息收发、Thinking 反馈、卡片渲染、群聊适配 |
-| M2 | Agent 内核 | Agentic Loop、Tool Use、流式输出、中断、并行 Run |
+| M2 | Agent 内核 | Agentic Loop、Tool Use、流式输出、中断、并行子代理（D33） |
 | M3 | 工具层 | 内置工具、MCP 客户端、Skill 加载器 |
 | M4 | 工作空间管理 | 目录隔离、Git clone、workspace.toml、FeishuChat 隔离 |
 | M5 | 管理后台 | WS CRUD、飞书 App 注册、Skill 上传、MCP 配置、会话历史、Memory 管理 |
@@ -649,7 +698,7 @@ WS-Frontend 挂载 python-test Skill
 | `TaskList` / `TaskCreate` / `TaskUpdate` | Agent 内部 todos | ❌ |
 | `Plan Mode` | 计划模式 | ❌ |
 | `WebFetch` / `WebSearch` | 网络访问 | ❌ |
-| `Agent`（Subagent） | 委派子任务 | 看子任务调用的工具 |
+| `Agent`（Subagent） | 委派子任务（支持单 Run 内并行，design D33） | 可重入父 Run 锁，看子任务工具 |
 | `skill__{name}` | 触发加载 Skill 完整内容（每个挂载 Skill 自动生成一个 tool） | ❌ |
 
 > 抢锁规则详见 D20。Memory 写入复用 `Write` / `Edit`，路径放宽到 `chats/{feishu_chat_id}/memory/` 子树（仅当前 FeishuChat）。
@@ -966,6 +1015,81 @@ sequenceDiagram
 - **非阻塞落盘**：span 事件进内存队列后台批写，payload 走线程池，Agent 主路径永不阻塞
 - **嵌套天然**：子代理 / asyncio task 自动继承父 contextvars，span 树深度不限
 - **详设**：§7.3
+
+### 6.9 并行子代理执行流程
+
+> 决策见 D33。本节展示主 Agent 触发并行子代理的执行时序与拆分判断。
+
+主 Agent 在一轮 LLM 响应里若返回多个 `Agent` tool_use，Loop 按 D33 拆分指导判断是否并行：只读 / 无写冲突 / 无强依赖则 `asyncio.gather` 并发，否则串行。
+
+```mermaid
+sequenceDiagram
+    participant AL as 主 Agent Loop
+    participant LLM as Claude API
+    participant TR as Tracer(contextvars)
+    participant Pool as asyncio.gather
+    participant SA1 as 子代理 A
+    participant SA2 as 子代理 B
+
+    Note over AL: 父 Run 已持有 ws_lock:{ws_id}(D20)
+    AL->>LLM: 调用(含 Skill descriptions + D33 拆分指导)
+    LLM-->>AL: 返回 2 个 Agent tool_use(独立子任务)
+    AL->>AL: 拆分判断:无写冲突 / 无强依赖 → 并行
+
+    TR->>TR: subagent span(A)、(B) enter(并列挂父 span)
+    AL->>Pool: asyncio.gather(SA1, SA2)
+
+    par 并发执行
+        SA1->>SA1: 独立上下文 + 继承 MEMORY.md / AGENT.md
+        SA1->>SA1: 内部 Agentic Loop
+        Note over SA1: Read / Grep 只读并行<br/>Write 可重入父 Run 锁,不重复抢
+        SA1-->>AL: 仅回最终消息(tool_result)
+    and
+        SA2->>SA2: 独立上下文 + 继承同源指令
+        SA2->>SA2: 内部 Agentic Loop
+        Note over SA2: 写型工具可重入,不阻塞 A
+        SA2-->>AL: 仅回最终消息(tool_result)
+    end
+
+    Note over AL: 单个子代理失败 → 标记失败回主 Agent(不一刀切)
+    TR->>TR: subagent span(A)、(B) exit
+    AL->>AL: 汇总结果,继续主 Loop
+```
+
+**关键点**：
+
+- **并发而非串行**：多个 Agent tool_use 经 `asyncio.gather` 同时拉起，端到端耗时 ≈ 最慢子代理，而非之和
+- **独立上下文**：子代理各自独立 system prompt + 历史，仅最终消息回流主 Agent（省 token、防上下文污染）
+- **可重入锁**：父 Run 已持有 `ws_lock`，子代理复用不重复抢——只读天然并行，写型子代理间也不二次串行（依赖拆分判断避免写同一文件）
+- **失败隔离**：单个子代理失败仅标记回主 Agent，由主 Agent 决定重试 / 跳过 / 终止，不拖垮整 Run
+- **trace 嵌套**：各子代理一个 `subagent` span 并列挂在父 span 下，§7.2 / §6.8 天然支持
+
+拆分判断流程（主 Agent 在发起并行前的决策路径）：
+
+```mermaid
+flowchart TD
+    Start([LLM 返回多个 tool_use]) --> HasAgent{含 Agent 工具?}
+    HasAgent -- 否 --> Serial[按 D20 常规串行执行]
+    HasAgent -- 是 --> CheckIndep{子任务相互独立?<br/>无写冲突且无强依赖}
+    CheckIndep -- 否 --> Serial
+    CheckIndep -- 是 --> CheckWrite{含写型子任务?}
+    CheckWrite -- 全只读 --> Gather[asyncio.gather 并发<br/>可重入父 Run 锁 零风险]
+    CheckWrite -- 含写型 --> CheckFiles{写型子任务改动<br/>不同文件或模块?}
+    CheckFiles -- 是 --> Gather
+    CheckFiles -- 否 --> Serial
+    Gather --> Quota{并发数未超上限 5?}
+    Quota -- 否 --> Queue[超限者排队等待]
+    Quota -- 是 --> Run[并发执行子代理]
+    Queue --> Run
+    Run --> Collect[各子代理仅回最终消息<br/>失败者标记 不一刀切]
+    Collect --> Resume[主 Agent 汇总 继续主 Loop]
+    Serial --> Resume
+```
+
+**与 D20 / D23 的衔接**：
+
+- 并发只发生在 **Run 内**；Run 间仍由 D20 串行——父 Run 抢到 `ws_lock` 后，整个 Run（含其所有子代理）都在同一临界区内，对其他 Run 不可见
+- 子代理不是独立 Run（D23 的「1 Session = 1 Run」不变），而是 Run 内的子流程；超时预算共享父 Run 的 10 min，非各自独立计时
 
 ---
 
