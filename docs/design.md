@@ -89,6 +89,7 @@ erDiagram
 - **多机器人一群**：1 个飞书群可以通过加多个机器人（多个 `app_id`）实现"绑多 WS"——每个 `(app_id, chat_id)` 对是一个独立 FeishuChat，各自绑一个 WS
 - **Memory 隶属 chat**：1 FeishuChat 1 份 memory 目录，跨 session 持久，跨 FeishuChat 隔离
 - **Skill / MCP 是顶层实体**：存于全局广场，WS 通过关联表 N:N 引用
+- **WS 级配置（workspace_settings）**：承载 WS 级配置，含上下文管理策略（D34：启用开关 / clearing 与 compaction 阈值 / `clear_keep` / `compact_recent` / 摘要模型 / instructions / `exclude_tools`）；存 DB 便于后台编辑，可作 `workspaces` 表 JSON 字段或独立表
 
 ### 2.2 概念定义
 
@@ -181,6 +182,117 @@ erDiagram
 | MVP | Docker Compose |
 | 生产 | K8s |
 
+### 3.5 项目结构与模块划分
+
+Monorepo：前后端 + 部署配置同仓。本节定目录骨架与模块边界，作为脚手架任务（task T0.1 / T0.2）的依据。
+
+**顶层结构**：
+
+```
+code-forge/
+├── backend/        # FastAPI 后端（Python 3.11+，uv 管理依赖）
+├── frontend/       # Vue 3 管理后台（pnpm）
+├── deploy/         # docker-compose / k8s / .env.example
+├── docs/           # spec / design / api / task
+├── .github/        # CI（lint / test / alembic check）
+└── README.md
+```
+
+**后端结构**（分层 + 按业务域组织，对应 §1 架构分层与 §5 模块清单）：
+
+```
+backend/
+├── pyproject.toml              # uv 管理依赖
+├── alembic/ {versions, env.py} # 迁移（T1.2）
+├── app/
+│   ├── main.py                 # FastAPI 入口 + 生命周期（启动恢复 D36、飞书 WS 池起停）
+│   ├── config.py               # pydantic-settings，环境分 dev/prod
+│   ├── core/                   # 横切基础设施（跨模块共用）
+│   │   ├── logging.py          # 结构化日志 jsonl
+│   │   ├── security.py         # 凭证加密 / 脱敏 / CSRF（D30 / D32 / NF4.2）
+│   │   ├── deps.py             # FastAPI 依赖：require_user / owner / admin（T1.5）
+│   │   └── recovery.py         # 启动恢复：孤儿 Run / 锁 / 异步任务（D36）
+│   ├── db/                     # M6 持久化
+│   │   ├── base.py / session.py
+│   │   ├── models/             # ORM：users / workspaces / feishu_chats / spans / workspace_settings ...
+│   │   └── tenant.py           # spans 查询强制注入 ws_id（D31）
+│   ├── api/                    # HTTP 接口层（M5 后台 API，对接 api.md）
+│   │   └── auth/ workspaces/ skills/ mcps/ feishu_apps/ users/ observability/ memory/
+│   ├── feishu/                 # M1 接入层
+│   │   ├── client.py           # lark-oapi 封装（tenant token / IM API）
+│   │   ├── ws_pool.py          # 多 App WebSocket 连接池（D7）
+│   │   ├── router.py           # (app_id, chat_id) → ws_id 路由（D8）
+│   │   ├── cards.py            # 富卡片渲染（D4）
+│   │   └── dedup.py            # 消息去重（D38）
+│   ├── agent/                  # M2 Agent 内核
+│   │   ├── loop.py             # Agentic Loop（§6.5）
+│   │   ├── run.py              # Session:Run = 1:1（D23）
+│   │   ├── context.py          # 上下文管理四道防线（D34）
+│   │   ├── lock.py             # WS 写锁 + 可重入（D20 / D33）
+│   │   ├── queue.py            # Run 队列 + 排队 / 中断反馈（§6.6）
+│   │   ├── subagent.py         # 并行子代理（D33）
+│   │   └── prompt.py           # system prompt 构建 + 注入顺序（D24）
+│   ├── providers/              # M2 LLM 抽象（D3）
+│   │   ├── base.py             # Provider 接口 + TokenCounter + context_window
+│   │   ├── anthropic_provider.py
+│   │   └── glm_provider.py     # 国内模型备选（规避封禁）
+│   ├── tools/                  # M3 工具层
+│   │   ├── base.py / registry.py
+│   │   ├── path_guard.py       # resolve_within 路径安全（D17）
+│   │   ├── builtin/            # Read / Write / Edit / Glob / Grep / Bash / WebFetch / TaskList / Agent ...
+│   │   ├── mcp/                # MCP 客户端 + 进程生命周期（D37）
+│   │   └── skill.py            # skill__{name} 按需加载（D16）
+│   ├── workspace/              # M4 工作空间管理
+│   │   ├── manager.py          # WS 创建 / 目录骨架 / 级联删除
+│   │   ├── git.py              # HTTPS clone / 同步 / Bash git 边界（D6 / D35）
+│   │   └── fs.py               # 目录工具 + resolve 校验（D17）
+│   ├── memory/                 # chat memory 读写（D18 / D22）
+│   ├── observability/          # M8
+│   │   ├── tracer.py           # contextvars span（D28 / §7.3）
+│   │   ├── buffer.py           # SpanBuffer 批写 + 降级（§7.4）
+│   │   ├── payload.py          # 落盘 / 截断 / 脱敏（§7.5 / §7.6）
+│   │   └── cost.py             # cost 引擎（§7.7）
+│   └── tasks/                  # 异步任务（git clone / 级联删除；asyncio + Redis，不引入 Celery）
+└── tests/
+```
+
+**前端结构**（Vue 3 管理后台）：
+
+```
+frontend/
+├── package.json               # pnpm
+├── vite.config.ts
+└── src/
+    ├── main.ts / App.vue
+    ├── router/                # 路由 + 守卫（未登录 / 401 跳登录）
+    ├── stores/                # Pinia（user / ws）
+    ├── api/                   # axios 封装 + 各资源客户端（对接 api.md）
+    ├── views/                 # auth / workspaces / skills / observability / memory / users
+    ├── components/
+    ├── composables/
+    └── types/
+```
+
+**模块 M1–M8 到后端目录映射**：
+
+| 模块（§5） | 后端目录 | 关键职责 |
+|---|---|---|
+| M1 飞书接入层 | `app/feishu/` | WS 连接池 / 路由 / 卡片 / 去重 |
+| M2 Agent 内核 | `app/agent/` + `app/providers/` | Loop / Run / 上下文 / 锁 / 子代理 / LLM 抽象 |
+| M3 工具层 | `app/tools/` | 内置工具 / MCP / Skill / 路径安全 |
+| M4 工作空间管理 | `app/workspace/` | 目录 / git / FeishuChat 绑定 |
+| M5 管理后台 | `app/api/` + `frontend/` | 后台 API + Vue 前端 |
+| M6 持久化 | `app/db/` + `app/memory/` | ORM / memory 文件组织 |
+| M7 鉴权 | `app/api/auth/` + `app/core/{security,deps}.py` | 账号密码 / owner 校验 / session |
+| M8 可观测性 | `app/observability/` | tracer / buffer / payload / cost |
+
+**分层与依赖约定**：
+
+- **分层**：`api`（HTTP 边界）→ 业务域（`agent` / `workspace` / `feishu` / `tools` / `memory`）→ 基础设施（`db` / `providers` / `observability` / `tasks`），**单向依赖**，禁止反向（基础设施不依赖业务域）
+- **横切逻辑归 `core/`**（日志 / 安全 / 依赖注入 / 启动恢复），不散落在各业务域
+- **模块内自治**：各业务域目录内按需再分 model / service，避免一开始过度拆分；目录边界 = 模块边界 = §5 的 M1–M8
+- **飞书侧与后台侧解耦**：飞书交互（`feishu/`，WebSocket）与管理后台（`api/`，HTTP）是两条独立入口，共享 `agent` / `workspace` 业务层，不互相调用
+
 ---
 
 ## 4. 关键决策记录
@@ -193,12 +305,12 @@ erDiagram
 ### D2: 使用范围 = 对外服务（多租户）
 
 - **理由**：长期目标是对外服务，架构需要早期预留
-- **MVP 策略**：先做 "准多租户" 版本（架构预留，邀请制使用），暂不做完整计费 / 审计
+- **MVP 策略**：先做 "准多租户" 版本（架构预留，账号由管理员开通），暂不做完整计费 / 审计
 
 ### D3: LLM 选型 = 多模型可切换
 
-- **理由**：避免厂商锁定，灵活适配不同场景
-- **MVP 策略**：先 Claude（生态最匹配 Tool Use），抽象 Provider 层为后续多模型铺路
+- **理由**：避免厂商锁定，灵活适配不同场景；Claude 对国内封禁，Provider 层必须支持国内模型（如 GLM）作为主模型与摘要模型的备选
+- **MVP 策略**：先 Claude（生态最匹配 Tool Use），抽象 Provider 层为后续多模型铺路；上下文管理（D34）自研且 Provider 无关，主模型 / 摘要模型切换到 GLM 等国内模型时上下文管理机制照常工作
 
 ### D4: 飞书交互深度 = 文本 + 富卡片
 
@@ -252,6 +364,7 @@ erDiagram
 - **挂载**：WS 通过关联表引用广场资源，N:N 关系
 - **删除策略**：被引用时禁删，必须先解绑所有 WS
 - **可见性**：默认 owner 私有，可设"全员可见"开关
+- **版本（MVP 无版本管理）**：作者更新 SKILL.md 后对所有挂载 WS **即时生效**（下次 Run 注入新内容）；不提供版本快照 / 回滚 / 钉版本——挂载方需知悉被引用 Skill 可被作者随时修改（spec F3.5.8）
 - **理由**：避免重复存储；用户驱动的生态而非管理员审核
 
 ### D12: 后台技术栈 = Vue 3 + Element Plus
@@ -328,7 +441,7 @@ erDiagram
   - code-review: 代码审查，检查常见问题
   ```
 
-- **挂载数量上限**：单 WS 最多 50 个 Skill（约 5K token）
+- **挂载数量上限**：单 WS 最多 50 个 Skill；实际 system prompt 占用**取决于 description 长度**（建议每条 ≤ 100 token，50 条约 5K token；description 无硬约束时可能更高，上传时后端给出长度告警）
 
 #### 阶段 2：完整 SKILL.md 加载（Agent invoke 时）
 
@@ -472,12 +585,19 @@ WS-Frontend 挂载 python-test Skill
 
 - **System Prompt 指令**：Agent 在 system prompt 里收到明确的写入规则（类似 Claude Code 的 memory 规则），知道什么场景写、写哪类、写完怎么反馈
 
+- **群聊场景归属**（原"待细化"，现定默认）：
+  - **接受群内共享**：同一 FeishuChat 内 A 说的偏好，B 触发时 Agent 也用（D18 已定）
+  - **标注来源用户**：写入 `user` / `feedback` 类 memory 时，记录飞书 sender name（如"alice 偏好 ruff"），便于多用户场景溯源与后台人工裁决
+  - **冲突处理**：多人偏好冲突时（A 喜欢黑、B 喜欢白），**后写覆盖**——接受"最后发言者偏好优先"，MVP 不做人多偏好仲裁；用户可在后台编辑 memory 修正
+- **并发写入安全**（配合 D20 / D33）：
+  - **风险**：D20 规定 `Write`/`Edit` 抢 WS 锁，但 D33 子代理可重入不抢锁 → 多个写型子代理并发写同一 memory 文件 / `MEMORY.md` 索引会互相覆盖、丢数据
+  - **约束**：**memory 写入由主 Agent 收口**——子代理不直接落盘 memory，只回最终结果给主 Agent；由主 Agent 统一判断是否写 memory（主 Agent 持锁、串行写，天然无冲突）
+  - **理由**：子代理本就"仅回最终消息"（D33），让其顺带写 memory 既违反独立上下文原则、又引入并发风险；主 Agent 收口最自然
 - **理由**：
   - 等同 hermes agent 的全自动 memory 模式，降低用户认知负担
   - 用户不需要记 "什么时候要告诉 Agent 记住"
   - 强信号触发条件清晰，避免 Agent 滥写或漏写
 - **待细化**：
-  - 群聊场景下 `user` / `feedback` memory 的内容归属（接受群内共享，A 说 B 也用，但记录时是否需要标注来源用户？）
   - System prompt 中给 Agent 的 memory 写入指令的具体措辞
 
 ### D23: 会话语义 = 1 Session : 1 Run
@@ -618,9 +738,13 @@ WS-Frontend 挂载 python-test Skill
 - **方案**：
   - `User` 表：username + password_hash（argon2 / bcrypt）+ role + status + created_at
   - 登录 `POST /api/auth/login`（username + password）→ 校验密码 → 下发 HttpOnly Cookie session
-  - 邀请制（§5.1）：由管理员创建账号、分发初始密码；用户首次登录可改密
+  - 账号准入（§5.1）：账号由管理员开通创建、分发初始密码；用户首次登录可改密（非邀请制）
   - 角色二分（§5.1 不做细粒度 RBAC）：管理员 / 普通用户
-  - 安全：密码 hash 不存明文、登录限流防爆破、session 过期 + 续期
+  - 安全：
+    - 密码 hash 不存明文（argon2）、登录限流防爆破、session 过期 + 续期
+    - **敏感凭证静态加密**：git token（D6）/ 飞书 `app_secret`（D7）/ Anthropic key（D3）等凭证落盘前经应用层加密（如 Fernet，密钥由环境变量注入），DB 与日志均不存明文
+    - **传输安全**：生产环境强制 HTTPS；Cookie 增加 `Secure` 属性（仅 HTTPS 传输）
+    - **CSRF 防护**：Cookie-based session 有 CSRF 风险——依赖 `SameSite=Lax` + 写操作（POST/PATCH/DELETE）校验自定义请求头（如 `X-Requested-With`，浏览器跨站表单无法携带），敏感操作可叠加双提交 CSRF token
 - **与 D21 的关系**：飞书群内「使用权」仍是无权限模型（拉群即用），后台「身份」走账号密码——入口权与后台身份两层互不依赖
 - **接口**：详见 [api.md](./api.md) §2
 
@@ -671,6 +795,153 @@ WS-Frontend 挂载 python-test Skill
 - 合并策略：自动 merge 失败 → 主 Agent 收口或上报用户
 
 **理由**：L1 几乎零架构成本即可覆盖 80% 并行场景（调研、读多写少），是性价比最高的起点；L2 解决"并行改同一 repo"的硬骨头，但合并冲突 / worktree 生命周期管理复杂度高，等真有刚需再做；L3 是远期工作流能力，Plan 确认卡片为其铺路。
+
+### D34: 上下文管理 = 自研四道防线（Provider 无关 + WS 级可配）
+
+**背景**：Agentic Loop 多轮 tool_use，每次 `tool_result`（尤其 Bash 长输出、Read 大文件）持续累积进上下文。10 min 硬超时下，跑到中后期撞 model context limit（Claude 200K / GLM 128K）几乎是必然事件，若无显式策略，表现为 Run 莫名失败。
+
+**为什么不依赖 Anthropic 一方 context editing（compaction / `clear_tool_uses` beta）**：
+- Claude 对国内封禁，依赖其一方 API 增加不稳定因素；一方 API 的 trigger 只能按 `input_tokens` 设、绑定 Claude 协议，切到国内模型（GLM）即失效
+- 故 Code Forge **自研**一套 Provider 无关的上下文管理：机制本身不依赖任何厂商特有 API，只要 Provider 能给出 token 计数与 context window 大小即可工作。Claude / GLM 皆适用；摘要模型还可单独指定国内模型，进一步降低对 Claude 的依赖
+
+**核心认知（对齐 Anthropic cookbook 实测）**：上下文膨胀主因是 tool_result（占比 96%+），不是对话本身。策略因此**分层、按成本从低到高逐级处理**，而非一锅端摘要。
+
+**四道防线**：
+
+| 层 | 机制 | 有损 | 成本 | 触发 |
+|---|---|---|---|---|
+| **L0 源头节流** | 工具返回时截断 `tool_result` | 无（截断标注） | 零 | 始终开启 |
+| **L1 Tool-result clearing** | 替换旧 tool_result 为占位（保留 tool_use 记录） | 无损（可重取） | 零推理 | token > trigger1 |
+| **L2 Compaction** | 旧历史压成结构化摘要 | 有损 | 一次摘要 LLM 调用 | token > trigger2 |
+| **L3 Memory 联动** | compaction 前强信号沉淀 chat memory | 无损 | 工具调用 | 随 L2 |
+| **L4 硬兜底** | 中断 Run，告知用户 | — | — | 三层后仍超 limit 95% |
+
+**L0 源头节流（工具层实现，Provider 无关）**：
+
+- Bash：stdout / stderr 各 cap（默认 20K chars），超出中间截断并标注截断量
+- Read：大文件默认分段（offset / limit），限制单次读取 token 上限，不一次塞全文
+- ⚠️ 与 D26 / NF4.6.4 的 trace payload 截断**独立**——那是落盘给调试看、不影响进上下文；L0 是"进上下文前就截断"，两套独立参数
+
+**L1 Clearing（自研，Agent Loop 内）**：
+
+- 每轮请求前用 `TokenCounter`（Provider 适配）算当前 messages token 数
+- 超 `trigger1`（默认 model limit 的 50%）→ 扫描 messages，把"最近 `clear_keep` 次 tool_use"之前的 `tool_result` content 替换为占位（如 `[cleared; re-call the tool to refetch]`），**保留 tool_use 记录**（Agent 仍知道调过、需要时重取）
+- **不变量**：`tool_use` ↔ `tool_result` 的 id 配对必须完整（Anthropic API 要求配对齐全，缺失即报错）——只替换 `tool_result` 的 content、不动消息结构与配对
+- `exclude_tools`：不可重取的工具（如调 ephemeral API 的 MCP）排除，避免清掉后无法重取
+- 零推理成本；Code Forge 的 Bash/Read/Grep 输出都可重取 → **性价比最高的一层**，挡掉绝大部分膨胀
+
+**L2 Compaction（自研，摘要模型 WS 级可配）**：
+
+- L1 后仍超 `trigger2`（默认 model limit 的 75%）触发
+- 取需压缩的消息段（除 system prompt / 最近 `compact_recent` 轮原文 / 当前轮），调一次摘要 LLM 生成结构化摘要，替换为一条 summary 消息
+- **摘要模型 WS 级可配**：可用便宜模型或国内模型（如 GLM）——既降成本又规避 Claude 封禁
+- 摘要 `instructions`（coding 场景定制，默认）：保留代码片段 / 文件路径 / 变量名 / 技术决策 / 当前任务状态 / 未完成 todo / 用户偏好信号；丢弃冗余对话与已处理的大段工具输出
+
+**L3 Memory 联动（复用 D18 / D22）**：
+
+- compaction 是有损的，重要偏好 / 决策不应随压缩丢失
+- 触发 compaction 时，摘要 prompt 额外要求把"强信号"（D22）单独标出 → 主 Agent 收口写入 chat memory（F3.6.8）后再压缩
+- Code Forge 的 chat memory 本就等价于 client-side memory 原语（跨 session 持久），是这套体系里已落地的一层
+
+**L4 硬兜底**：三层过后仍 > limit 95% → 中断 Run，回复"上下文超限，建议拆分任务或新开会话"。
+
+**WS 级配置（可配，关联 WS）**：存 WS 级（`workspace_settings`，见 §2.1），管理后台可编辑（spec F3.7.8 / api §4）。
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | true | 是否启用自动压缩（关则仅留 L0 + L4 兜底） |
+| `trigger1` / `trigger2` | limit 的 50% / 75% | clearing / compaction 触发阈值（绝对值或百分比） |
+| `clear_keep` | 6 | clearing 保留最近 N 次 tool_use 不清 |
+| `compact_recent` | 6 | compaction 保留最近 M 轮原文不压 |
+| `summary_provider` / `summary_model` | 跟主 Provider / 便宜模型 | 摘要模型（可指定国内模型如 GLM） |
+| `compact_instructions` | coding 默认 | 可覆盖摘要指令 |
+| `exclude_tools` | MCP ephemeral 类 | clearing 不清的工具 |
+
+**Provider 抽象落点**（机制 Provider 无关的关键）：
+
+- `TokenCounter`：每个 Provider 实现 token 计数（Claude 可用 `messages.count_tokens` 或 tiktoken 估算；GLM 用其 tokenizer 或字符估算）
+- `context_window`：Provider 暴露各自上限（Claude 200K / 1M、GLM 128K）
+- clearing / compaction 逻辑位于 Agent Loop 通用层，不进 Provider 实现
+
+**与 prompt caching 的权衡**（仅对支持 caching 的 Provider，如 Claude）：
+
+- clearing / compaction 改变消息前缀 → prompt cache 失效
+- 策略：clearing 保证每次"清够量"（释放 ≥ 设定 token，类似 `clear_at_least` 思想），让 cache 失效值得；compaction 本就是大段压缩，天然够量
+- GLM 等无 caching 机制则无此权衡
+
+**可观测性**：clearing / compaction 各产一条 context event span（挂在 run span 下），记录命中层、前后 token、压缩比、保留轮数、命中工具，便于后台调参（F3.10）。
+
+**理由**：自研规避封禁与协议绑定，且机制 Provider 无关——切 GLM 也能用；分层让最便宜的 L0/L1 挡掉绝大部分膨胀（实测 tool_result 占 96%+），L2 只在必要时介入；WS 级可配兼顾不同项目对成本/保真度的取舍；摘要模型可指国内模型，进一步降低对 Claude 的依赖。
+
+### D35: 代码交付 = 本地工作副本 + diff 预览卡片，不自动 push（MVP）
+
+**背景**：Agent 改完代码后如何交到用户手里，是核心闭环最后一环。push / PR 涉及源仓库 write 鉴权、目标分支策略、CI 触发，复杂度高且副作用大。spec §2.2"最终交付修改"与 F3.1.4 diff 预览卡片此前未定义具体交付路径。
+
+**MVP 交付模型**：
+
+- Agent 的文件改动**只落在 `repos/{repo_id}/` 本地工作副本**，不自动 `commit`、不 `push`
+- Run 结束（及关键节点）后端计算 **工作副本 vs git HEAD** 的 diff，推 **diff 预览卡片**到飞书（F3.1.4）
+- 用户在飞书查看 diff；取代码由用户自行处理（进工作副本查看 / 后续提供导出能力）
+
+**Bash git 子命令边界**（配合 D17 / D20）：
+
+| 类别 | 子命令 | 策略 |
+|---|---|---|
+| 只读 git | `status / diff / log / show / branch / blame` | 允许（Agent 自查历史辅助决策） |
+| 写 git / 网络 git | `commit / push / pull / fetch / merge / reset / rebase / cherry-pick` 等 | **黑名单拦截**，告知 Agent "MVP 不支持改 git 状态" |
+
+理由：让 Agent 能读 git 历史辅助决策，但不污染 git 状态、不触发外部副作用。
+
+**后续演进（P2）**：可配源仓库 write token → Agent 产 commit + 推分支 + 提 PR（需分支策略 / CI 隔离）。
+
+**理由**：MVP 先把"改对 + 可查看"做扎实；push / PR 鉴权与副作用风险高，留到核心闭环验证完后再做。
+
+### D36: 启动恢复 = 孤儿 Run / 锁 / 异步任务清理
+
+**背景**：后端重启 / 崩溃时，DB 里仍有 `status=running` 的 Run、Redis 里未过期的 WS 锁、文件系统里半途的 git clone 残留。不清理会永久卡住——§6.6 state machine 的 `Running` 无出口，WS 锁被幽灵持有。
+
+**启动恢复流程**（进程启动时执行一次）：
+
+| 对象 | 恢复动作 |
+|---|---|
+| Run | 扫描 `status=running` → 标 `interrupted`（reason=restart）→ 强制释放其 `ws_lock`（无视 TTL）→ 经接入层通知对应 chat "Run 因服务重启中断" |
+| WS 锁 | 清理 Redis 中所有 `ws_lock:*`（启动时无 Run 在跑，全部安全释放） |
+| 异步任务 | `status=running` 的 task（git clone 等）→ 标 `failed`，清理不完整残留目录（`repos/{repo_id}/` 若 `.git` 不完整则删） |
+| 飞书 WS 连接 | 依赖 lark-oapi SDK 重连；配合 D38 消息去重，接受重连窗口期（秒级）内消息延迟、不重复处理 |
+
+**理由**：无状态恢复是 7x24 可用（NF4.4.1）的底线；启动即清空运行态，把"卡死"收敛到一个确定的空闲态，避免幽灵锁 / 幽灵 Run。
+
+### D37: MCP 客户端生命周期 + 工具锁 / 路径规则
+
+**背景**：D11 把 MCP 作顶层实体供 WS 引用，但 stdio MCP 是常驻子进程、http MCP 是远程连接；其进程生命周期、crash 恢复、工具调用的锁与路径规则此前未定。
+
+**进程模型**：
+
+- **stdio MCP**：按 `(ws_id, mcp_id)` **懒启动常驻**子进程；引用计数管理（解挂后引用归零则停）；单 WS 同时常驻 stdio MCP 进程数上限 **10**（防进程爆炸）
+- **http MCP**：无本地进程，按需连接
+- **crash 恢复**：子进程异常退出 → 标该 MCP 本 Run 内不可用 → 调用报错回灌 Agent（见 §6.5 错误回灌）；后台自动重启供后续 Run
+
+**工具规则**：
+
+| 维度 | 规则 | 理由 |
+|---|---|---|
+| 锁 | MCP 工具**默认抢 WS 锁**（无法静态判断副作用，按 Bash 同理"无脑抢"，D20）；MCP 配置可标 `read_only=true` 豁免抢锁 | 保守保 WS 串行；给已知无副作用的 MCP 留并行加速口子 |
+| 路径 | MCP 工具**不受 D17 路径校验**约束（工具内部行为不可控） | 风险由挂载方自负，对齐 D5 / NF4.2.2 |
+| 超时 | 单次 MCP 工具调用默认 60s 超时 | 防 stdio 进程卡死拖垮整个 Run |
+
+**理由**：MCP 是开放的"外挂工具"，必须按"无法信任其行为"对待——默认抢锁保 WS 串行、不假定路径安全、有超时兜底；`read_only` 标记为已知无副作用的 MCP 留并行加速能力。
+
+### D38: 飞书消息去重 = message_id 幂等
+
+**背景**：飞书 WebSocket 断线重连可能重复投递同一条消息，会触发两次 Run、排两次队、跑两遍写操作。F3.1.5 的即时 Thinking 反馈是副作用、不能用来去重。
+
+**方案**：
+
+- 接入层收到消息后，以飞书 `message_id` 为幂等键，写入 Redis（`SETNX msg_dedup:{message_id}` + 短 TTL，如 10 min）
+- 命中已存在 → 丢弃重复消息，不再触发 Run（重复的 Thinking 反馈也无害，可选抑制）
+- 配合 D36 启动恢复：重连补推的消息若已处理过则跳过
+
+**理由**：去重必须在接入层、进 Run 队列之前；message_id 是飞书侧的天然幂等键，成本极低。
 
 ---
 
@@ -751,6 +1022,9 @@ sequenceDiagram
 - **Thinking 表情**：接入层收到消息**立即**回复飞书"思考中"表情 / 卡片，给用户即时感知，避免 Agent 启动延迟期间用户以为消息丢失
 - **路由键**：`(app_id, chat_id)` → `feishu_chat_id` → `ws_id` 三级查找
 - **多 App 并行**：接入层维护多个飞书 WebSocket 长连接（每个 `app_id` 一个），消息统一进 Run 队列
+- **消息去重**（D38）：以飞书 `message_id` 为幂等键写入 Redis，重连补推的重复消息在进 Run 队列前丢弃，避免重复触发 Run
+- **输入边界**（MVP）：仅支持**纯文本**消息触发 Agent；图片 / 文件 / 语音 / 引用回复等富消息暂不处理（静默忽略或回复"暂不支持该消息类型"）
+- **流式推送节流**：飞书卡片更新有 QPS 限制，`text_delta` 累计达阈值（默认 ~500ms 窗口 或 ~200 token）才合并更新一次进度卡片，避免限流；最终回复完整落盘 session JSONL
 - **写锁调度**：详见 §6.6
 
 ### 6.2 工作空间创建流程
@@ -871,7 +1145,7 @@ flowchart TD
     CallAPI --> HasTool{响应含 tool_use?}
     HasTool -- 否 --> Final[最终回复]
     HasTool -- 是 --> Parse[解析 tool_use]
-    Parse --> CheckSkill{是 skill__invoke?}
+    Parse --> CheckSkill{是 skill 调用?}
     CheckSkill -- 是 --> LoadSkill[加载完整 SKILL.md 进上下文]
     LoadSkill --> BuildCtx
     CheckSkill -- 否 --> CheckPath{路径安全校验<br/>repos/ 或 chats/当前 chat/memory/}
@@ -885,6 +1159,15 @@ flowchart TD
     Final --> Persist[持久化会话 JSONL]
     Persist --> Done([Run 完成])
 ```
+
+**关键说明**：
+
+- **普通工具的一轮多并发**：单条 LLM 响应可返回多个 tool_use（Anthropic API 原生支持）。Loop 对同响应内工具按 D20 抢锁规则分组执行——只读工具（`Read` / `Glob` / `Grep` / `WebFetch` / `WebSearch` / `skill__{name}`）用 `asyncio.gather` **并发**；写工具（`Write` / `Edit` / `Bash` / 默认 MCP）**串行**。与 D33 的区别：D33 讲 `Agent` 子代理工具的并行，本条讲普通工具的并行
+- **循环兜底**：除 10 min 硬超时（F3.3.6）外，设单 Run 最大 tool_use 轮数上限（默认 **50**，可配置），防 Agent 陷入"反复 Read 同一文件"式空转烧 token；触顶则中断并告知用户
+- **错误回灌**（工具失败与 LLM 失败分两类处理）：
+  - **工具失败**（Bash 退出码非 0、MCP 不可用、路径越界拒绝）：错误信息作为 `tool_result`（`is_error=true`）回灌 Agent，由 Agent 自主决定重试 / 换方案 / 放弃——**不一刀切中断**
+  - **LLM 调用失败**（429 / 5xx / 网络超时）：Provider 层指数退避重试（默认 3 次），仍失败则中断 Run 并告知用户
+- **中断检查点**：每轮 Loop 末检查中断信号（详见 §6.6）；上下文超限（D34 硬阈值）也作为中断出口
 
 ### 6.6 Run 排队与 WS 写锁生命周期
 
@@ -925,6 +1208,16 @@ stateDiagram-v2
 - **硬超时**：10 分钟兜底，防 Run 卡死导致 WS 永久死锁
 - **释放保证**：`try / finally` 模式，无论正常完成 / 异常 / 中断 / 超时都释放锁
 - **事件通知**：用 Redis pub/sub 通知排队中的 Run，避免空轮询
+
+**中断执行语义**（spec F3.3.5 的细化）：
+
+- **排队中取消**：立即从队列移除，无任何副作用、未启动 Agent Loop
+- **运行中中断的执行细节**：
+  - **时机**：不保证"瞬时"——当前正在执行的工具（尤其 Bash）完成或被 kill 后，Loop 才在下一轮检查点真正停止
+  - **Bash**：向子进程组发 `SIGTERM`，宽限 3s 后 `SIGKILL`；其余内置工具（Read/Write/Edit 等）一般为快操作，不强制中断
+  - **子代理**：中断信号级联到所有运行中子代理，子代理走同样的 `SIGTERM`/`SIGKILL`；不保证子代理的部分中间结果保留（仅最终消息才回流主 Agent）
+  - **文件改动**：中断时**已落盘的改动保留，不回滚**——MVP 不做事务性回滚；用户通过 diff 预览卡片（D35）查看已改内容，自行决定保留或还原
+  - **锁**：无论何种中断路径，`try / finally` 保证释放 `ws_lock`
 
 ### 6.7 Skill 加载与执行流程
 
@@ -1129,7 +1422,7 @@ flowchart TD
 | run | 根 span，1 Run = 1 run span | Run 启动（抢到 WS 锁后） |
 | llm | 一次 Claude API 调用 | Agent Loop 每轮调 Provider |
 | tool | 一次工具调用（内置 / MCP） | 解析到 tool_use |
-| skill | 一次 skill__invoke（加载 SKILL.md） | Agent 触发 skill 工具 |
+| skill | 一次 skill__{name} 调用（加载 SKILL.md） | Agent 触发 skill 工具 |
 | subagent | 一次子代理调用，内可嵌套 | Agent 调 Agent 工具 |
 | interrupt | 中断事件 | 用户中断 / 超时 |
 | error | 错误标记（可选） | 异常路径 |
@@ -1167,7 +1460,7 @@ flowchart TD
 | Run 启动 / 结束 / 异常 / 中断 / 超时 | run（+ interrupt） | status, error_type, 总 cost |
 | Claude API 调用前 / stream 各事件 / 调用结束 | llm | model, payload_ref, input/output/cache token, stop_reason, cost |
 | tool_use 解析后 / 路径拒绝 / 抢锁 / 执行完成 | tool | tool_name, tool_input_summary, tool_path_rejected, tool_acquired_lock, duration |
-| skill__invoke | skill | skill_id, 加载耗时 |
+| skill__{name} | skill | skill_id, 加载耗时 |
 | Agent 子代理调用 | subagent | 子代理内 span 经 parent_span_id 关联到本 span |
 
 **streaming token 聚合**（Claude stream 事件分布）：
@@ -1295,7 +1588,7 @@ flowchart TD
 | WS 内资源 | Repo / FeishuChat / 挂载 / AGENT.md | /workspaces/{ws_id}/repos、/chats、/skills、/agent-md |
 | 广场 | Skill / MCP | /skills、/mcps |
 | 会话历史 | Session | /workspaces/{ws_id}/sessions |
-| Memory | chat 级记忆文件 | /workspaces/{ws_id}/chats/{chat_id}/memory |
+| Memory | chat 级记忆文件 | /workspaces/{ws_id}/chats/{feishu_chat_id}/memory |
 | 可观测性 | Trace / Insights / Monitoring | /workspaces/{ws_id}/traces、/insights、/monitoring |
 
 **通用约定**（详见 api.md §1）：
@@ -1318,4 +1611,4 @@ flowchart TD
 | Week 1-2 | 基础架构 | 多 App 飞书 WebSocket 接入、工作空间模型、Git clone、基础 Agent Loop、Thinking 反馈 |
 | Week 3-4 | 核心闭环 | 内置工具、飞书富卡片（含排队）、Session/Run 管理、FeishuChat 级目录隔离、WS 写锁 |
 | Week 5-6 | 后台 + 高级特性 | Vue 后台、**管理后台 API（[api.md](./api.md)）**、Skill / MCP 动态管理、Memory 系统、**可观测性 P0**（spans 表 + 采集埋点 + Trace 瀑布图） |
-| Week 7+ | 测试 + 部署 | 端到端测试、邀请制上线、**可观测性 P1**（成本聚合 + 监控告警） |
+| Week 7+ | 测试 + 部署 | 端到端测试、账号开通上线、**可观测性 P1**（成本聚合 + 监控告警） |

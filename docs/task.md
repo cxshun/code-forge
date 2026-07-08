@@ -36,7 +36,7 @@
 
 ### T0.1 后端工程脚手架
 - **模块**：M2/M4 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：—
-- **范围**：FastAPI 项目结构（分层：api / service / agent / tools / infra）、`pyproject.toml`（Python 3.11+，uv 管理依赖）、配置管理（pydantic-settings，环境变量分 dev/prod）、结构化日志（jsonl）、`uvicorn` 入口。
+- **范围**：FastAPI 项目结构（按 design §3.5：分层 + 业务域，目录骨架 `app/{api, feishu, agent, providers, tools, workspace, memory, db, observability, core, tasks}`）、`pyproject.toml`（Python 3.11+，uv 管理依赖）、配置管理（pydantic-settings，环境变量分 dev/prod）、结构化日志（jsonl）、`uvicorn` 入口。
 - **对应文档**：design §3.1
 - **验收标准**：
   - [ ] `uv run uvicorn` 能起服务，`GET /healthz` 返回 200
@@ -73,7 +73,7 @@
 
 ### T1.1 数据库 schema 设计与建模
 - **模块**：M6 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T0.1
-- **范围**：SQLAlchemy 2.x 异步模型，覆盖：`users` / `feishu_apps` / `workspaces` / `feishu_chats`（`(app_id, chat_id)` 唯一约束）/ `git_repos` / `skills` / `mcps` / `workspace_skill` / `workspace_mcp` / `sessions` / `runs` / `spans`（单表自引用，design §7.2）/ `tasks`（异步任务）。索引、外键、`ON DELETE CASCADE` 按文档补齐。
+- **范围**：SQLAlchemy 2.x 异步模型，覆盖：`users` / `feishu_apps` / `workspaces` / `feishu_chats`（`(app_id, chat_id)` 唯一约束）/ `git_repos` / `skills` / `mcps` / `workspace_skill` / `workspace_mcp` / `sessions` / `runs` / `spans`（单表自引用，design §7.2）/ `tasks`（异步任务）/ `workspace_settings`（WS 级配置，含上下文管理策略 `context_config`，design D34，可作 `workspaces` JSON 字段或独立表）。索引、外键、`ON DELETE CASCADE` 按文档补齐。
 - **对应文档**：design §2.1 实体关系、§7.2 spans 模型；spec F3.2~F3.3
 - **验收标准**：
   - [ ] 所有表含 `created_at / updated_at`
@@ -359,6 +359,24 @@
   - [ ] subagent span 正确嵌套在父 span 下
   - [ ] 执行时序与拆分判断符合 design §6.9 两张流程图
 
+### T5.10 上下文管理（自研四道防线）
+- **模块**：M2/M3 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T5.2, T5.5, T5.6, T1.1
+- **范围**：自研四道防线（design D34），Provider 无关：
+  - **L0 源头节流**：Bash stdout/stderr 各 cap（默认 20K chars）、Read 大文件分段限大小（与 D26 trace 截断独立）
+  - **L1 clearing**：`TokenCounter`（Provider 适配）算 token；超 `trigger1` 替换旧 `tool_result` 为占位、**保留 tool_use 记录与 id 配对不变量**；`exclude_tools` 支持
+  - **L2 compaction**：超 `trigger2` 取段摘要、替换为 summary 消息；摘要模型 WS 级可配（可指国内模型 GLM）；coding 场景 instructions
+  - **L3 memory 联动**：compaction 前强信号标出 → 主 Agent 收口写 chat memory
+  - **L4 硬兜底**：三层后仍超 limit 95% 中断告知
+  - 读 `workspace_settings.context_config`；clearing/compaction 各埋 context event span
+- **对应文档**：design D34；spec F3.3.10 / F3.7.8
+- **验收标准**：
+  - [ ] 长任务（超 limit 50%）触发 clearing，tool_result 替换为占位、tool_use 记录与配对不破坏
+  - [ ] clearing 后仍涨触发 compaction，摘要模型可指国内模型（GLM）
+  - [ ] 切换 Provider（Claude→GLM）上下文管理照常工作（`TokenCounter` 适配）
+  - [ ] WS 级配置生效（阈值 / `clear_keep` / `compact_recent` / instructions 可覆盖默认）
+  - [ ] 三层后仍超 95% 优雅中断并告知用户
+  - [ ] clearing / compaction 各产 context event span（记命中层 / 前后 token / 压缩比）
+
 > **切片验收点 P5**：群里提需求 → Agent 跑完工具链 → 流式回复 + 代码修改落盘（单 WS 串行下）。
 
 ---
@@ -434,7 +452,7 @@
 
 ### T7.5 Memory 管理后端 API
 - **模块**：M5/M6 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.3, T1.5
-- **范围**：`GET/PUT/DELETE /workspaces/{ws_id}/chats/{chat_id}/memory/{filename}` + 列表；`filename` 严格白名单 `[A-Za-z0-9_\-]+\.md`，resolve 校验落在 `memory/` 子树。
+- **范围**：`GET/PUT/DELETE /workspaces/{ws_id}/chats/{feishu_chat_id}/memory/{filename}` + 列表；`filename` 严格白名单 `[A-Za-z0-9_\-]+\.md`，resolve 校验落在 `memory/` 子树。
 - **对应文档**：api §8；spec F3.7.6；design D17 / D19
 - **验收标准**：
   - [ ] 路径穿越被拒（`../` / 非法字符）
@@ -619,11 +637,11 @@
 
 ### T11.3 部署与上线
 - **模块**：infra ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T11.1
-- **范围**：Docker Compose 生产配置（含备份 / 日志 / 健康检查）；邀请制账号初始化；上线 checklist。
+- **范围**：Docker Compose 生产配置（含备份 / 日志 / 健康检查）；账号开通初始化；上线 checklist。
 - **对应文档**：design §3.4；spec §5.1
 - **验收标准**：
   - [ ] 生产环境可一键部署
-  - [ ] 首批邀请账号可登录使用
+  - [ ] 首批开通账号可登录使用
 
 ---
 

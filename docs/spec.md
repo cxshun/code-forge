@@ -26,7 +26,7 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 
 ### 1.3 MVP 目标
 
-验证 "飞书 → 工作空间 → Agent" 的核心闭环，邀请制小范围验证。
+验证 "飞书 → 工作空间 → Agent" 的核心闭环；账号由管理员开通。
 
 ---
 
@@ -66,6 +66,9 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.1.4** 支持流式进度推送，富卡片类型：进度卡片、Plan 确认卡片、diff 预览卡片、TaskList 卡片、**排队状态卡片**
 - **F3.1.5** **收到消息即时反馈**：接入层收到用户消息后立即回复"思考中"表情 / 卡片，给用户感知确认（避免 Agent 启动延迟期间用户以为消息丢失）
 - **F3.1.6** **多 App 支持**：后端支持注册多个飞书自建应用（`app_id` + `app_secret`），每个 App 维护独立 WebSocket 长连接；同一群可通过添加多个机器人实现"一群绑多 WS"
+- **F3.1.7** **消息去重**：接入层以飞书 `message_id` 为幂等键（Redis 短期缓存），断线重连补推的重复消息在进 Run 队列前丢弃，避免重复触发 Run（详见 design D38）
+- **F3.1.8** **输入边界（MVP）**：仅支持**纯文本**消息触发 Agent；图片 / 文件 / 语音 / 引用回复等富消息暂不处理（静默忽略或回复"暂不支持该消息类型"）
+- **F3.1.9** **流式推送节流**：`text_delta` 按阈值（~500ms 窗口或 ~200 token）合并更新进度卡片，避免触发飞书卡片更新 QPS 限制
 
 ### 3.2 工作空间管理
 
@@ -86,6 +89,10 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.3.7** 1 个 Session = 1 个 Run（详见 design D23）
 - **F3.3.8** **并行子代理**：主 Agent 可在单 Run 内并行启动多个子代理（独立上下文窗口，仅回最终消息），用于可独立拆分的子任务；只读子代理天然并行，写型子代理复用父 Run 锁（详见 design D33）
 - **F3.3.9** **拆分判断责任**：主 Agent 负责判断子任务是否可安全并行（无写冲突 / 无强依赖），system prompt 提供拆分指导；存在冲突时串行（详见 design D33）
+- **F3.3.10** **上下文管理（自研分层）**：Agentic Loop 多轮 tool_result 累积，需显式管理。采用**四道防线**逐级处理（按成本从低到高）：L0 工具结果源头节流（Bash/Read 输出截断）→ L1 tool-result clearing（旧结果替换为占位、保留 tool_use 记录、可重取、零推理）→ L2 compaction（旧历史压成结构化摘要）→ L3 memory 联动（compaction 前强信号沉淀 chat memory）→ L4 硬兜底（仍超 limit 95% 则中断告知）。**自研、Provider 无关**（不依赖 Anthropic 一方 context editing beta，规避 Claude 国内封禁），机制本身只要 Provider 给出 token 计数与 context window 即可工作；摘要模型可指定国内模型（如 GLM）。支持 WS 级配置（F3.7.8，详见 design D34）
+- **F3.3.11** **循环兜底**：除单 Run 10 min 硬超时外，设最大 tool_use 轮数上限（默认 50，可配置），防 Agent 空转烧 token；触顶中断并告知用户
+- **F3.3.12** **错误处理与重试**：工具失败（Bash 退出码非 0 / MCP 不可用 / 路径越界）作为 `tool_result`（is_error）回灌 Agent 自主决策（不一刀切中断）；LLM 调用失败（429/5xx/超时）由 Provider 层指数退避重试（默认 3 次），仍失败则中断 Run（详见 design §6.5）
+- **F3.3.13** **中断执行语义**：排队中取消=立即移除无副作用；运行中中断=当前工具完成/被 kill 后停止 Loop，Bash 走 SIGTERM→SIGKILL、子代理级联中断；已落盘改动**保留不回滚**（详见 design §6.6）
 
 ### 3.4 工具系统
 
@@ -97,6 +104,9 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
   - **F3.4.3.3** `scripts/` 通过 Bash 执行（不进入上下文），`resources/` 通过 Read 按需读取（依赖层）
 - **F3.4.4** **路径安全**：所有文件类工具调用必须限定在当前 WS 的 `repos/` 与 `chats/{feishu_chat_id}/memory/` 子树内；Bash 同样需路径校验，禁止越界
 - **F3.4.5** **写锁规则**：`Write` / `Edit` / `Bash` 抢 WS 写锁；`Read` / `Glob` / `Grep` 等只读工具不抢锁（详见 design D20）
+- **F3.4.6** **普通工具一轮多并发**：单条 LLM 响应内含多个 tool_use 时，只读工具（`Read`/`Glob`/`Grep`/`WebFetch`/`WebSearch`/`skill__{name}`）`asyncio.gather` 并发执行，写工具串行（与 D33 的子代理并行正交，详见 design §6.5）
+- **F3.4.7** **MCP 工具规则**：MCP 工具默认抢 WS 锁（无法静态判断副作用）、不受 D17 路径校验约束（风险自担）；MCP 配置可标 `read_only=true` 豁免抢锁；单次调用默认 60s 超时（详见 design D37）
+- **F3.4.8** **Bash git 边界与代码交付**：Bash 允许只读 git 子命令（`status`/`diff`/`log`/`show`/`branch`/`blame`），禁用写 git 与网络 git（`commit`/`push`/`pull`/`fetch`/`merge`/`reset` 等，黑名单拦截）；代码交付 = 改动落 `repos/` 本地工作副本 + diff 预览卡片，**MVP 不自动 commit/push**（详见 design D35）
 
 ### 3.5 Skill / MCP 广场
 
@@ -110,6 +120,7 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
   - frontmatter：`name`（必需，全局唯一）、`description`（必需，注入 system prompt）
   - 正文：`## 何时使用` / `## 工作流程` / `## 脚本说明（如有）` / `## 注意事项`
   - 必须明确告知 Agent 脚本调用路径与资源读取路径，不写脚本源码
+- **F3.5.8** **Skill 版本（MVP 无版本管理）**：作者更新 SKILL.md 后对已挂载 WS **即时生效**（下次 Run 注入新 description / 内容）；MVP 不提供版本快照、回滚与"钉版本"能力——挂载方需知悉被引用 Skill 可能被作者随时修改
 
 ### 3.6 Memory 系统
 
@@ -123,6 +134,8 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
   - 不写：代码状态、弱信号、敏感信息、临时上下文
   - 防过度：同主题合并、更新优先、写入后告知用户
 - **F3.6.7** Memory 陈旧性：Agent 推荐前需校验 memory 引用的文件 / 函数 / 配置是否仍存在
+- **F3.6.8** **Memory 并发写入安全**：Run 内并行子代理不直接写 memory，memory 写入由主 Agent 收口（避免子代理间写冲突，详见 design D22）
+- **F3.6.9** **群聊归属**：同一 FeishuChat 内多用户共享 memory；写入 `user`/`feedback` 类时标注来源飞书 sender；多人偏好冲突时后写覆盖，用户可在后台修正（详见 design D22）
 
 ### 3.7 管理后台
 
@@ -133,6 +146,7 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.7.5** 会话历史查看（按 FeishuChat / session 维度）
 - **F3.7.6** **Memory 管理**：按 FeishuChat 维度列出 memory 文件，支持查看 / 编辑 / 删除
 - **F3.7.7** 用户账号管理：管理员创建 / 停用账号、重置密码、角色分配（自建账号密码体系，详见 design D32）
+- **F3.7.8** **WS 级上下文管理配置**：按 WS 配置自动压缩策略（启用开关、clearing/compaction 触发阈值、`clear_keep`/`compact_recent`、摘要模型 provider/model、摘要 instructions、`exclude_tools`）；默认值合理、WS 可覆盖（详见 design D34）
 
 ### 3.8 鉴权
 
@@ -184,6 +198,9 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **NF4.2.1** 不使用沙箱，路径校验作为软隔离
 - **NF4.2.2** 外部 MCP 服务的风险由用户自挂自负责
 - **NF4.2.3** Memory 不应记录敏感信息（密钥、凭证），Agent 写入时需判断
+- **NF4.2.4** **敏感凭证静态加密**：git token / 飞书 `app_secret` / Anthropic key 等凭证落盘前经应用层加密（密钥环境变量注入），DB 与日志均不存明文（详见 design D32）
+- **NF4.2.5** **传输安全**：生产环境强制 HTTPS；管理后台 Cookie 增加 `Secure` 属性（详见 design D32）
+- **NF4.2.6** **CSRF 防护**：Cookie-based session 的写操作（POST/PATCH/DELETE）依赖 `SameSite=Lax` + 自定义请求头校验（详见 design D32）
 
 ### 4.3 性能
 
@@ -198,6 +215,7 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **NF4.4.1** 7x24 在线（云端部署）
 - **NF4.4.2** 飞书移动端 / 桌面端均可访问
 - **NF4.4.3** Run 中断后状态可追溯（不丢失历史）
+- **NF4.4.4** **启动恢复**：后端重启 / 崩溃后，启动时清理孤儿 Run（标 interrupted）、强制释放残留 WS 锁、清理半途异步任务残留，避免幽灵 Run / 死锁（详见 design D36）
 
 ### 4.5 可扩展性
 
@@ -219,10 +237,10 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 
 ### 5.1 MVP 范围
 
-- 邀请制使用（不做完整计费、审计）
+- 账号由管理员开通（不做完整计费、审计）
 - 仅支持群聊（私聊暂不做）
 - **群聊内无权限控制**（拉群即用，详见 design D21）
-- 仅支持 Claude（多模型抽象层为后续铺路）
+- 多模型：Claude 为主、GLM 等国内模型备选（Provider 抽象层，design D3）
 - 不做沙箱（路径校验作为软隔离）
 
 ### 5.2 假设
@@ -242,3 +260,7 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - 并行子代理的 worktree 隔离（L2，design D33）—— MVP 用 L1 子代理并行 + 主 Agent 拆分判断兜底
 - 并行子代理的 Plan DAG 编排（L3，design D33）
 - 可观测性的质量评估 / 模型对比 / OTel 导出（P2 预留，字段已对齐 OTel gen_ai.*）
+- 图片 / 文件 / 语音 / 引用回复等富消息输入（MVP 仅纯文本触发，F3.1.8）
+- 自动 git commit / push / 提 PR（MVP 交付仅本地工作副本 + diff 预览卡片，F3.4.8 / design D35）
+- Skill 版本快照 / 回滚 / 钉版本（MVP 作者更新即时生效，F3.5.8）
+- 上下文超限后的自动跨 session 续跑（MVP 硬兜底中断，design D34）

@@ -15,10 +15,9 @@
 
 ### 1.2 鉴权
 
-- **自建账号密码**（design D32）：`POST /api/auth/login`（username + password）→ 后端校验密码（argon2）→ 下发 **HttpOnly Cookie**（session）
+- **自建账号密码**（design D32）：`POST /api/auth/login`（username + password）→ 校验密码 → 下发 **HttpOnly Cookie**（session）；未登录返回 `401`
 - 后续请求自动带 Cookie；敏感操作再做 owner 校验
-- 未登录返回 `401`
-- 邀请制（§5.1）：账号由管理员创建，用户首次登录可改密
+- 账号准入（§5.1）：账号由管理员开通创建，用户首次登录可改密
 
 ### 1.3 统一响应
 
@@ -41,7 +40,7 @@
 ### 1.5 分页 / 筛选 / 排序
 
 - 分页：`?page=1&page_size=20`（默认 20，最大 100）
-- 筛选：`?status=&from=&to=&chat_id=&q=` 等，见各接口
+- 筛选：`?status=&from=&to=&feishu_chat_id=&q=` 等，见各接口
 - 排序：`?sort=-created_at`（`-` 表示降序）
 
 ### 1.6 多租户与权限
@@ -80,7 +79,7 @@
 | Method | Path | 说明 | 权限 |
 |---|---|---|---|
 | GET | /users | 用户列表 | 管理员 |
-| POST | /users | 创建账号（邀请制，含初始密码） | 管理员 |
+| POST | /users | 创建账号（含初始密码，管理员开通） | 管理员 |
 | PATCH | /users/{id} | 改角色 / 停用启用 | 管理员 |
 | POST | /users/{id}:reset-password | 重置密码 | 管理员 |
 
@@ -109,7 +108,7 @@
 | GET | /workspaces | 当前用户的 WS 列表 | user |
 | POST | /workspaces | 创建 | user |
 | GET | /workspaces/{ws_id} | 详情（含 repos / chats / mounts 概览） | owner |
-| PATCH | /workspaces/{ws_id} | 改名 / 配置 | owner |
+| PATCH | /workspaces/{ws_id} | 改名 / 配置（含上下文管理策略 `context_config`，D34） | owner |
 | DELETE | /workspaces/{ws_id} | 删除（需先解绑所有 FeishuChat + 解除广场引用，D11 / F3.2.5）→ 异步级联清理 | owner |
 
 ---
@@ -133,7 +132,9 @@
 | GET | /workspaces/{ws_id}/chats | 已绑 FeishuChat 列表 | owner |
 | POST | /workspaces/{ws_id}/chats:check | 预校验（app_id + chat_id 合法性 + 机器人在群） | owner |
 | POST | /workspaces/{ws_id}/chats | 绑定（app_id + chat_id → feishu_chat_id，唯一约束） | owner |
-| DELETE | /workspaces/{ws_id}/chats/{chat_id} | 解绑 | owner |
+| DELETE | /workspaces/{ws_id}/chats/{feishu_chat_id} | 解绑 | owner |
+
+> **ID 区分**：路径参数 `{feishu_chat_id}` 是 DB 内部主键（列表 / 绑定响应返回，后续操作用它）；绑定 / 预校验入参 body 里的 `chat_id` 是飞书原始群 ID（`oc_xxx`），与 `app_id` 组成 FeishuChat 唯一键。下文路径中的 `{feishu_chat_id}` 均指 DB 内部主键。
 
 ### 5.3 Skill / MCP 挂载（F3.2 / D11）
 
@@ -186,7 +187,7 @@
 
 | Method | Path | 说明 | 权限 |
 |---|---|---|---|
-| GET | /workspaces/{ws_id}/chats/{chat_id}/sessions | 某 FeishuChat 的 session 列表 | owner |
+| GET | /workspaces/{ws_id}/chats/{feishu_chat_id}/sessions | 某 FeishuChat 的 session 列表 | owner |
 | GET | /workspaces/{ws_id}/sessions/{session_id} | 单 session 的 JSONL 内容（分页 / 分片） | owner |
 
 ---
@@ -195,10 +196,10 @@
 
 | Method | Path | 说明 | 权限 |
 |---|---|---|---|
-| GET | /workspaces/{ws_id}/chats/{chat_id}/memory | 某 FeishuChat 的 memory 文件列表 | owner |
-| GET | /workspaces/{ws_id}/chats/{chat_id}/memory/{filename} | 文件内容 | owner |
-| PUT | /workspaces/{ws_id}/chats/{chat_id}/memory/{filename} | 编辑文件 | owner |
-| DELETE | /workspaces/{ws_id}/chats/{chat_id}/memory/{filename} | 删除文件 | owner |
+| GET | /workspaces/{ws_id}/chats/{feishu_chat_id}/memory | 某 FeishuChat 的 memory 文件列表 | owner |
+| GET | /workspaces/{ws_id}/chats/{feishu_chat_id}/memory/{filename} | 文件内容 | owner |
+| PUT | /workspaces/{ws_id}/chats/{feishu_chat_id}/memory/{filename} | 编辑文件 | owner |
+| DELETE | /workspaces/{ws_id}/chats/{feishu_chat_id}/memory/{filename} | 删除文件 | owner |
 
 > **路径安全**：`filename` 仅允许 `[A-Za-z0-9_\-]+\.md`，后端 resolve 校验落在 `memory/` 子树（D17），防穿越。
 
@@ -210,7 +211,7 @@
 
 | Method | Path | 说明 | 权限 |
 |---|---|---|---|
-| GET | /workspaces/{ws_id}/traces | Run 列表（筛选 status / from / to / chat_id） | owner |
+| GET | /workspaces/{ws_id}/traces | Run 列表（筛选 status / from / to / feishu_chat_id） | owner |
 | GET | /workspaces/{ws_id}/traces/{run_id} | 单 Run 的 span 树（全量 span 元数据） | owner |
 | GET | /workspaces/{ws_id}/traces/{run_id}/spans/{span_id}/payload | span 完整 payload（HTTP Range 分片流式） | owner |
 
