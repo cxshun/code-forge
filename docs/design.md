@@ -110,7 +110,7 @@ erDiagram
 /workspaces/{ws_id}/                # 物理工作空间
   ├── workspace.toml                # 配置(引用 repos/skills/mcps/chats)
   ├── AGENT.md                      # WS 级项目指令(详见 D24,Run 启动时注入)
-  ├── repos/                        # 多 repo 根目录(Agent 默认 cwd)
+  ├── repos/                        # 多 repo 父目录(Agent 默认 cwd = 第一个挂载 repo 根,见 D24)
   │   └── {repo_id}/                # 每个 repo 一个子目录
   │       ├── .git/
   │       ├── AGENT.md              # Repo 级项目指令(随 git 同步,详见 D24)
@@ -328,7 +328,7 @@ frontend/
 - **关系**：1 WS : N GitRepo，用户自选数量（0~N）
 - **理由**：简化认证流程；多 repo 支持微服务 / 前后端等场景
 - **支持**：可选 token 用于私有仓库
-- **Agent cwd**：默认在 `repos/` 根，工具调用显式带 repo_id 路径前缀
+- **Agent cwd**：默认在第一个挂载 repo 的根目录（`repos/{repo_id}/`，详见 D24）；MVP 单 repo 内活动，工具用相对路径即可，不跨 repo
 - **跨 repo 操作**：MVP 不支持，Agent 在单 repo 内活动
 
 ### D7: 飞书应用 = 企业自建应用，支持多 App 配置
@@ -593,6 +593,13 @@ WS-Frontend 挂载 python-test Skill
   - **风险**：D20 规定 `Write`/`Edit` 抢 WS 锁，但 D33 子代理可重入不抢锁 → 多个写型子代理并发写同一 memory 文件 / `MEMORY.md` 索引会互相覆盖、丢数据
   - **约束**：**memory 写入由主 Agent 收口**——子代理不直接落盘 memory，只回最终结果给主 Agent；由主 Agent 统一判断是否写 memory（主 Agent 持锁、串行写，天然无冲突）
   - **理由**：子代理本就"仅回最终消息"（D33），让其顺带写 memory 既违反独立上下文原则、又引入并发风险；主 Agent 收口最自然
+- **陈旧性校验**（spec F3.6.7）：
+  - **风险**：Memory 跨 session 持久累积，引用的文件 / 函数 / 配置 / 命令可能已被改动或删除；Agent 若直接推荐会给出失效建议（如推荐已删的文件、已重命名的函数）
+  - **策略**（system prompt 指令层 + 轻量主动核验）：
+    - system prompt 明确要求：推荐前对 memory 引用的路径 / 符号做存在性核验（用 `Read` / `Grep` 确认文件与函数仍在）
+    - 核验通过才推荐；核验失败则降级表述为"曾经有 X（可能已变更，建议先确认）"，不当事实直接输出
+    - 不做全量 memory 扫描（成本高），仅在 Agent 主动引用某条 memory 时按需核验
+  - **理由**：MVP 不做 memory 自动失效 / 重写（成本高），按需核验即可覆盖绝大多数失效场景；与 task T7.4 对齐
 - **理由**：
   - 等同 hermes agent 的全自动 memory 模式，降低用户认知负担
   - 用户不需要记 "什么时候要告诉 Agent 记住"
@@ -945,6 +952,38 @@ WS-Frontend 挂载 python-test Skill
 
 ---
 
+### D39: 引用回复 = 纯文本注入（不恢复 session 上下文）
+
+**背景**：用户常"针对之前的问题继续追问"——在飞书群里引用某条历史消息（自己的提问或 Agent 的回复）+ @ 机器人。F3.1.8 原 MVP 边界把引用回复排除，需补回。
+
+**方案**：
+
+- 接入层识别引用回复（消息带 `parent_id` / quote 字段）+ @ 机器人 → 触发 Agent（对齐 D21 / F3.1.3，**引用也必须 @ 才触发**；只引用不 @ 不触发）
+- 提取被引用消息的**纯文本**：
+  - 优先解析 WebSocket 推送事件自带的 quote / parent 消息体
+  - 取不到则以飞书 `parent_id` 调 `im.message.get` 拉取被引用消息体，再提取纯文本
+  - 被引用消息为 Agent 富卡片（diff / 进度 / TaskList 卡片）时：提取卡片纯文本字段；提取失败标注"（引用的是一条卡片消息，无法提取文本）"
+- **注入形态**（作为本次 Run **user message** 的前置引用块，非 system prompt）：
+
+  ```
+  【引用的历史消息】
+  > {被引用消息纯文本}
+
+  【我的问题】
+  {本次 text（去掉 @机器人 标记）}
+  ```
+
+**不做（对齐 D23 / spec §5.3）**：
+
+- **不恢复**被引用消息所属 session 的历史 JSONL、不"续跑"——本次 Run 仍是独立新 Session / 新 Run
+- 跨 session 的关键上下文由 Memory 系统承担，引用回复不负责恢复工具中间态
+
+**去重**：引用回复产生的 Run 仍以本次 `message_id` 为幂等键（D38），与被引用的 parent `message_id` 无关
+
+**理由**：实现最简单，与 1 Session:1 Run（D23）严格一致；覆盖绝大多数"引用追问"场景；恢复完整 session 上下文会违背 spec §5.3 的 MVP 边界，且复杂度 / 成本失控
+
+---
+
 ## 5. 模块清单
 
 | 优先级 | 模块 | 职责 |
@@ -1023,7 +1062,7 @@ sequenceDiagram
 - **路由键**：`(app_id, chat_id)` → `feishu_chat_id` → `ws_id` 三级查找
 - **多 App 并行**：接入层维护多个飞书 WebSocket 长连接（每个 `app_id` 一个），消息统一进 Run 队列
 - **消息去重**（D38）：以飞书 `message_id` 为幂等键写入 Redis，重连补推的重复消息在进 Run 队列前丢弃，避免重复触发 Run
-- **输入边界**（MVP）：仅支持**纯文本**消息触发 Agent；图片 / 文件 / 语音 / 引用回复等富消息暂不处理（静默忽略或回复"暂不支持该消息类型"）
+- **输入边界**（MVP）：支持**纯文本**消息与**引用回复**触发 Agent；图片 / 文件 / 语音等富消息暂不处理（静默忽略或回复"暂不支持该消息类型"）。引用回复处理详见 D39
 - **流式推送节流**：飞书卡片更新有 QPS 限制，`text_delta` 累计达阈值（默认 ~500ms 窗口 或 ~200 token）才合并更新一次进度卡片，避免限流；最终回复完整落盘 session JSONL
 - **写锁调度**：详见 §6.6
 
