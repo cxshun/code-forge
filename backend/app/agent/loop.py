@@ -12,6 +12,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from app.agent.context import ContextManager
 from app.providers.base import Message, Provider, Usage
 from app.tools.base import ToolContext
 from app.tools.registry import ToolRegistry
@@ -131,6 +132,7 @@ async def run_loop(
     on_text: OnText | None = None,
     on_tool_call: OnToolCall | None = None,
     on_usage: OnUsage | None = None,
+    context_manager: ContextManager | None = None,
 ) -> str:
     """Agentic Loop 入口。返回最终回复文本。
 
@@ -143,6 +145,10 @@ async def run_loop(
     for round_idx in range(MAX_TOOL_ROUNDS):
         if ctx.abort.is_set():
             raise InterruptedError("interrupted at round start")
+
+        # 上下文管理（D34）：每轮前跑四道防线（L1 clearing / L4 兜底）
+        if context_manager is not None:
+            await context_manager.manage(ctx.messages)
 
         assistant, tool_calls, _usage = await _stream_round(
             provider, ctx, tools_defs, on_text, on_usage

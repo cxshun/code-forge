@@ -29,6 +29,15 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
+    def sub_registry(self, exclude: set[str] | None = None) -> "ToolRegistry":
+        """复制一份，排除指定 name（子代理用：去掉 Agent 防无限递归）。"""
+        exclude = exclude or set()
+        r = ToolRegistry()
+        for name, t in self._tools.items():
+            if name not in exclude:
+                r.register(t)
+        return r
+
     def is_readonly(self, name: str) -> bool:
         tool = self._tools.get(name)
         return bool(tool and tool.read_only)
