@@ -10,7 +10,7 @@ Provider 实现不关心推送层，只做 LLM 调用与结果解析。
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -103,7 +103,7 @@ class Provider(ABC):
         """
         ...  # type: ignore[empty-body]
         if False:
-            yield  # noqa: B901 让 ruff 认可是 generator
+            yield
 
     @abstractmethod
     async def count_tokens(

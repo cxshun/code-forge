@@ -1,39 +1,24 @@
 """Agentic Loop 主体（design §6.5 / spec F3.3）。
 
-核心循环：调用 LLM（Provider）→ 解析 tool_use → 执行工具 → 反馈结果 → 直到最终回复。
-支持流式输出（``StreamEvent`` 由调用方推飞书）、中断 / 超时检测点、最大 tool_use 轮数
-兜底（F3.3.11）。
+核心循环：调用 LLM（Provider 流式）→ 解析 tool_use → 执行工具（只读并发 / 写串行，
+F3.4.6）→ 反馈 tool_result → 直到最终回复（无 tool_use）。
 
-Loop 不直接感知飞书——stream 事件通过回调（``on_tool_call``、``on_text``、``on_stop``）
-交给调用方（接入层）推卡片，保持 Agent 内核与接入层解耦。
+兜底：最大 tool_use 轮数（F3.3.11，默认 50）、中止事件（T6.3 中断）。
+Loop 不感知飞书——text_delta / tool 调用通过回调交给接入层推卡片，保持解耦。
 """
 
 import asyncio
-import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from app.providers.base import (
-    Message,
-    Provider,
-    StreamEvent,
-    ToolDef,
-    Usage,
-)
+from app.providers.base import Message, Provider, Usage
+from app.tools.base import ToolContext
+from app.tools.registry import ToolRegistry
 
 log = logging.getLogger("agent.loop")
 
-_STREAM_TIMEOUT = 600
-_MAX_TOOL_ROUNDS = 50
-
-
-@dataclass
-class ToolResult:
-    """工具执行结果。"""
-    content: str
-    is_error: bool = False
-    tool_call_id: str = ""
+MAX_TOOL_ROUNDS = 50
 
 
 @dataclass
@@ -41,110 +26,153 @@ class RunContext:
     """一次 Loop 运行的上下文。"""
     system: str = ""
     messages: list[Message] = field(default_factory=list)
-    tools: list[ToolDef] = field(default_factory=list)
+    tool_ctx: ToolContext | None = None
     run_id: int | None = None
     abort: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-# ---- 事件回调类型 ----
-OnText = Callable[[str], None]  # text_delta 片段
-OnToolCall = Callable[[dict], None]  # {name, id, input}
-OnToolResult = Callable[[ToolResult], None]
-OnUsage = Callable[[Usage], None]
-OnStop = Callable[[str], None]  # final_text
+# ---- 事件回调 ----
+OnText = Callable[[str], Awaitable[None] | None]
+OnToolCall = Callable[[dict], Awaitable[None] | None]
+OnUsage = Callable[[Usage], Awaitable[None] | None]
+
+
+async def _maybe_call(cb, *args):
+    if cb is None:
+        return
+    res = cb(*args)
+    if asyncio.iscoroutine(res):
+        await res
+
+
+async def _stream_round(
+    provider: Provider,
+    ctx: RunContext,
+    tools_defs,
+    on_text: OnText | None,
+    on_usage: OnUsage | None,
+) -> tuple[Message, list[dict], Usage]:
+    """流式调一轮 LLM，返回 (assistant_msg, tool_calls, usage)。"""
+    assistant = Message(role="assistant", content="")
+    tool_calls: list[dict] = []
+    usage = Usage()
+
+    async for evt in provider.stream(
+        messages=ctx.messages,
+        tools=tools_defs or None,
+        system=ctx.system,
+    ):
+        if evt.type == "text" and evt.text:
+            assistant.content = (assistant.content or "") + evt.text
+            await _maybe_call(on_text, evt.text)
+        elif evt.type == "tool_use_start" and evt.tool_name:
+            tool_calls.append(
+                {
+                    "id": "",
+                    "name": evt.tool_name,
+                    "input": evt.tool_input or "{}",
+                }
+            )
+        elif evt.type == "stop":
+            if evt.input_tokens is not None:
+                usage.input_tokens = evt.input_tokens
+            if evt.output_tokens is not None:
+                usage.output_tokens = evt.output_tokens
+
+    await _maybe_call(on_usage, usage)
+    return assistant, tool_calls, usage
+
+
+async def _execute_tools(
+    registry: ToolRegistry,
+    tool_calls: list[dict],
+    ctx: RunContext,
+    on_tool_call: OnToolCall | None,
+) -> list[Message]:
+    """执行一轮 tool_calls：只读并发、写串行（F3.4.6）。
+
+    返回 tool_result messages，已按调用顺序排列（便于配对）。
+    """
+    if ctx.tool_ctx is None:
+        raise RuntimeError("tool_ctx not set but tools requested")
+
+    async def _exec_one(tc: dict) -> Message:
+        if ctx.abort.is_set():
+            raise InterruptedError("interrupted during tool execution")
+        await _maybe_call(on_tool_call, tc)
+        content = await registry.execute(tc["name"], tc.get("input", "{}"), ctx.tool_ctx)
+        return Message(role="tool_result", tool_call_id=tc.get("id", ""), content=content)
+
+    # 分类：只读 vs 写
+    read_calls = [tc for tc in tool_calls if registry.is_readonly(tc["name"])]
+    write_calls = [tc for tc in tool_calls if not registry.is_readonly(tc["name"])]
+
+    results: dict[int, Message] = {}
+
+    # 只读并发
+    if read_calls:
+        read_results = await asyncio.gather(*[_exec_one(tc) for tc in read_calls])
+        for tc, msg in zip(read_calls, read_results, strict=True):
+            results[id(tc)] = msg
+
+    # 写串行（D20：抢 WS 锁由工具内部/T6.1 处理；此处保证顺序）
+    for tc in write_calls:
+        results[id(tc)] = await _exec_one(tc)
+
+    # 按原 tool_calls 顺序返回（保证 tool_use ↔ tool_result 配对）
+    return [results[id(tc)] for tc in tool_calls]
 
 
 async def run_loop(
     provider: Provider,
     ctx: RunContext,
+    registry: ToolRegistry | None = None,
     *,
     on_text: OnText | None = None,
     on_tool_call: OnToolCall | None = None,
-    on_tool_result: OnToolResult | None = None,
     on_usage: OnUsage | None = None,
-    on_stop: OnStop | None = None,
 ) -> str:
-    """Agentic Loop 入口。
+    """Agentic Loop 入口。返回最终回复文本。
 
-    Args:
-        provider: LLM Provider（Claude / mock）
-        ctx: RunContext（system / messages / tools / abort event）
-        on_*: 事件回调（接入层通过它们推飞书）
+    - 无 registry 或无 tools：首轮无 tool_use 即返回
+    - 中止：ctx.abort.set() → 抛 InterruptedError
+    - 超过 MAX_TOOL_ROUNDS → 抛 RuntimeError（F3.3.11）
     """
-    final_text = ""
-    for round_idx in range(_MAX_TOOL_ROUNDS):
-        # 中止检测
+    tools_defs = registry.defs() if registry else []
+
+    for round_idx in range(MAX_TOOL_ROUNDS):
         if ctx.abort.is_set():
             raise InterruptedError("interrupted at round start")
 
-        # 调用 LLM（流式）
-        assistant_msg = Message(role="assistant", content="")
-        round_tool_calls: list[dict] = []
-        inp = 0
-        outp = 0
+        assistant, tool_calls, _usage = await _stream_round(
+            provider, ctx, tools_defs, on_text, on_usage
+        )
+        ctx.messages.append(assistant)
 
-        try:
-            async for evt in provider.stream(
-                messages=ctx.messages,
-                tools=ctx.tools or None,
-                system=ctx.system,
-            ):
-                if evt.type == "text" and evt.text:
-                    assistant_msg.content = (assistant_msg.content or "") + evt.text
-                    if on_text:
-                        on_text(evt.text)
+        if not tool_calls:
+            return assistant.content or ""
 
-                elif evt.type == "tool_use_start" and evt.tool_name:
-                    round_tool_calls.append({"id": "", "name": evt.tool_name, "input": evt.tool_input or "{}"})
+        if registry is None:
+            # 有 tool_use 但无 registry：回灌错误让 Agent 自知
+            for tc in tool_calls:
+                ctx.messages.append(
+                    Message(
+                        role="tool_result",
+                        tool_call_id=tc.get("id", ""),
+                        content=f"Error: no tool registry available for {tc['name']}",
+                    )
+                )
+            continue
 
-                elif evt.type == "tool_use_end":
-                    pass
-
-                elif evt.type == "stop":
-                    if evt.input_tokens is not None:
-                        inp = evt.input_tokens
-                    if evt.output_tokens is not None:
-                        outp = evt.output_tokens
-                    break
-
-        except Exception as e:
-            log.exception("LLM stream error round %d", round_idx)
-            raise
-
-        # usage
-        usage = Usage(input_tokens=inp, output_tokens=outp)
-        if on_usage:
-            on_usage(usage)
-        final_text = assistant_msg.content or ""
-
-        # tool_use 解析（handle one round of parallel tool calls）
-        if not round_tool_calls:
-            # 无工具调用 → 最终回复
-            if on_stop:
-                on_stop(final_text)
-            return final_text
-
-        assistant_msg.tool_calls = round_tool_calls
-        ctx.messages.append(assistant_msg)
-
-        # 逐工具调用执行（D20：写工具抢锁；F3.4.6：只读工具并发）
-        for tc in round_tool_calls:
-            if ctx.abort.is_set():
-                raise InterruptedError("interrupted during tool execution")
-            if on_tool_call:
-                on_tool_call(tc)
-
-            # tool_call 回调后由调用方执行工具并返回结果
-            # (此处仅为 Loop 编排，工具执行由上层 `runtool` 函数完成)
-            # 执行后结果通过 on_tool_result 回调或直接塞 ctx.messages
-            if on_tool_result:
-                await asyncio.sleep(0)  # 占位，实际执行在 runtool 层
+        tool_result_msgs = await _execute_tools(registry, tool_calls, ctx, on_tool_call)
+        ctx.messages.extend(tool_result_msgs)
 
         log.info(
-            "tool round %d: %d tools, in=%d out=%d text_len=%d",
+            "round %d: %d tools (%d read / %d write)",
             round_idx + 1,
-            len(round_tool_calls),
-            inp, outp, len(final_text),
+            len(tool_calls),
+            sum(1 for tc in tool_calls if registry.is_readonly(tc["name"])),
+            sum(1 for tc in tool_calls if not registry.is_readonly(tc["name"])),
         )
 
-    raise RuntimeError(f"exceeded max tool rounds ({_MAX_TOOL_ROUNDS})")
+    raise RuntimeError(f"exceeded max tool rounds ({MAX_TOOL_ROUNDS})")
