@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Env / data
+.env
+.env.*
+!deploy/.env.example
+data/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test / lint cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

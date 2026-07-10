@@ -1,0 +1,5 @@
+# pnpm 11+ 设置家目录。允许以下依赖运行 install/postinstall 脚本：
+# esbuild 下载平台二进制，vue-demi 按 Vue 版本切换。
+allowBuilds:
+  esbuild: true
+  vue-demi: true

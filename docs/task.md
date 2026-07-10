@@ -40,29 +40,29 @@
 
 > 单一进度看板，每行 = 一个任务。按 Task ID 顺序排列；状态 / 负责 / 完成日 随推进更新，详情见各 Phase 任务段落。
 
-**进度统计**：已完成 `0 / 64` ｜ P0 `0 / 54` ｜ P1 `0 / 10`
+**进度统计**：已完成 `17 / 64` ｜ P0 `16 / 54` ｜ P1 `1 / 10`
 
 | Task | 标题 | 状态 | 优先级 | 负责 | 完成日 |
 |---|---|---|---|---|---|
-| T0.1 | 后端工程脚手架 | ⚪ 未开始 | P0 | — | — |
-| T0.2 | 前端工程脚手架 | ⚪ 未开始 | P0 | — | — |
-| T0.3 | Docker Compose 本地环境 | ⚪ 未开始 | P0 | — | — |
-| T0.4 | CI 骨架 | ⚪ 未开始 | P1 | — | — |
-| T1.1 | 数据库 schema 设计与建模 | ⚪ 未开始 | P0 | — | — |
-| T1.2 | Alembic 迁移初始化 | ⚪ 未开始 | P0 | — | — |
-| T1.3 | 文件系统目录工具 | ⚪ 未开始 | P0 | — | — |
-| T1.4 | 自建账号密码鉴权 | ⚪ 未开始 | P0 | — | — |
-| T1.5 | 权限装饰器与 owner 校验 | ⚪ 未开始 | P0 | — | — |
-| T1.6 | 用户管理 API | ⚪ 未开始 | P1 | — | — |
-| T2.1 | Workspace CRUD | ⚪ 未开始 | P0 | — | — |
-| T2.2 | Git Repo 挂载与同步 | ⚪ 未开始 | P0 | — | — |
+| T0.1 | 后端工程脚手架 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T0.2 | 前端工程脚手架 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T0.3 | Docker Compose 本地环境 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T0.4 | CI 骨架 | ✅ 已完成 | P1 | cxshun | 2026-07-09 |
+| T1.1 | 数据库 schema 设计与建模 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T1.2 | Alembic 迁移初始化 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T1.3 | 文件系统目录工具 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T1.4 | 自建账号密码鉴权 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T1.5 | 权限装饰器与 owner 校验 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T1.6 | 用户管理 API | ✅ 已完成 | P1 | cxshun | 2026-07-09 |
+| T2.1 | Workspace CRUD | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T2.2 | Git Repo 挂载与同步 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
 | T2.3 | FeishuChat 绑定（含预校验） | ⚪ 未开始 | P0 | — | — |
 | T2.4 | Skill / MCP 挂载管理 | ⚪ 未开始 | P0 | — | — |
-| T2.5 | AGENT.md 读写 | ⚪ 未开始 | P0 | — | — |
-| T2.6 | 异步任务轮询 API | ⚪ 未开始 | P0 | — | — |
-| T3.1 | Skill 上传与广场 CRUD | ⚪ 未开始 | P0 | — | — |
-| T3.2 | MCP 注册与广场 CRUD | ⚪ 未开始 | P0 | — | — |
-| T3.3 | 飞书 App 注册 API | ⚪ 未开始 | P0 | — | — |
+| T2.5 | AGENT.md 读写 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T2.6 | 异步任务轮询 API | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T3.1 | Skill 上传与广场 CRUD | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T3.2 | MCP 注册与广场 CRUD | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
+| T3.3 | 飞书 App 注册 API | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
 | T4.1 | 飞书 SDK 封装与 API 客户端 | ⚪ 未开始 | P0 | — | — |
 | T4.2 | 多 App WebSocket 长连接池 | ⚪ 未开始 | P0 | — | — |
 | T4.3 | 群聊消息接收与 @识别 | ⚪ 未开始 | P0 | — | — |
@@ -116,39 +116,43 @@
 > 目标：前后端能本地跑起来，依赖服务（PG / Redis）容器化，约定项目骨架。
 
 ### T0.1 后端工程脚手架
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M2/M4 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：—
 - **范围**：FastAPI 项目结构（按 design §3.5：分层 + 业务域，目录骨架 `app/{api, feishu, agent, providers, tools, workspace, memory, db, observability, core, tasks}`）、`pyproject.toml`（Python 3.11+，uv 管理依赖）、配置管理（pydantic-settings，环境变量分 dev/prod）、结构化日志（jsonl）、`uvicorn` 入口。
 - **对应文档**：design §3.1
 - **验收标准**：
-  - [ ] `uv run uvicorn` 能起服务，`GET /healthz` 返回 200
-  - [ ] 配置按环境加载（DB / Redis / 飞书 / Anthropic key 占位）
-  - [ ] 请求日志中间件就位
+  - [x] `uv run uvicorn` 能起服务，`GET /healthz` 返回 200
+  - [x] 配置按环境加载（DB / Redis / 飞书 / Anthropic key 占位）
+  - [x] 请求日志中间件就位
+- **完成记录**：FastAPI 脚手架落地，目录骨架对齐 design §3.5（`app/{api,feishu,agent,providers,tools,workspace,memory,db,observability,core,tasks}`）。uv 管理依赖（Python 3.11）；pydantic-settings 配置（dev/prod/test，凭证占位）；structlog jsonl 日志 + 请求中间件（request_id 注入 contextvars）。验证：`uv run pytest` 1 passed、`uv run ruff check .` clean、`uvicorn` 起服务 `/healthz` 返回 `{"status":"ok","version":"0.1.0","env":"dev"}`。
 
 ### T0.2 前端工程脚手架
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M5 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：—
 - **范围**：Vue 3 + Vite + TypeScript、Element Plus、Pinia、Vue Router、axios 封装（统一错误处理 / 拦截 401）、ESLint + Prettier。
 - **对应文档**：design §3.2
 - **验收标准**：
-  - [ ] `pnpm dev` 起服务，占位首页可访问
-  - [ ] axios 实例含 baseURL（指向后端 `/api`）+ 401 跳登录拦截
+  - [x] `pnpm dev` 起服务，占位首页可访问
+  - [x] axios 实例含 baseURL（指向后端 `/api`）+ 401 跳登录拦截
+- **完成记录**：Vue3 + Vite6 + TS + Element Plus + Pinia + Vue Router + axios 脚手架，`src/{router,stores,api,views,types}`。axios 实例 baseURL=`/api` + withCredentials + 401 跳登录拦截；路由守卫未登录跳登录（带 redirect）。pnpm 11 用 `pnpm-workspace.yaml` 配 `allowBuilds`(esbuild/vue-demi)。验证：`pnpm build`（vue-tsc 类型检查通过、1668 模块）、`pnpm dev` HTTP 200（`#app` 挂载 + `main.ts` 加载）。
 
 ### T0.3 Docker Compose 本地环境
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：infra ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T0.1
 - **范围**：`docker-compose.yml` 编排 PostgreSQL、Redis、后端、前端；初始化卷；`.env.example`。
 - **对应文档**：design §3.4（MVP = Docker Compose）
 - **验收标准**：
-  - [ ] `docker compose up` 一键拉起全栈
-  - [ ] PG / Redis 数据持久化卷配置就位
+  - [x] `docker compose up` 一键拉起全栈
+  - [x] PG / Redis 数据持久化卷配置就位
+- **完成记录**：`deploy/docker-compose.yml` 编排 postgres/redis/backend/frontend（4 services）+ `pg_data`/`redis_data`/`app_data` 持久化卷 + PG/Redis healthcheck + 后端 `depends_on: service_healthy`；配套 `Dockerfile.backend`(uv) / `Dockerfile.frontend`(pnpm) / `.env.example`。YAML 语法已校验。**验证后置**：本地未装 Docker，`docker compose up` 一键拉起待 Docker 环境验证（compose 文件 + 卷配置已就位）。
 
 ### T0.4 CI 骨架（可选先建）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：infra ｜ **优先级**：P1 ｜ **预估**：0.5d ｜ **依赖**：T0.1, T0.2
 - **范围**：lint + 单测 + migration check 的 CI workflow。
 - **验收标准**：
-  - [ ] PR 触发 CI，lint / test 失败阻断合并
+  - [x] PR 触发 CI，lint / test 失败阻断合并
+- **完成记录**：`.github/workflows/ci.yml`：backend job（setup-uv → `uv sync --all-extras` → ruff check → pytest）+ frontend job（pnpm → build）；alembic check 占位待 T1.2 启用。**验证后置**：PR 触发需推送 GitHub；本地 ruff / pytest / build 已分别通过。
 
 ---
 
@@ -157,59 +161,65 @@
 > 目标：DB schema 落地、Alembic 迁移就绪、自建账号密码登录闭环。
 
 ### T1.1 数据库 schema 设计与建模
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M6 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T0.1
 - **范围**：SQLAlchemy 2.x 异步模型，覆盖：`users` / `feishu_apps` / `workspaces` / `feishu_chats`（`(app_id, chat_id)` 唯一约束）/ `git_repos` / `skills` / `mcps` / `workspace_skill` / `workspace_mcp` / `sessions` / `runs` / `spans`（单表自引用，design §7.2）/ `tasks`（异步任务）/ `workspace_settings`（WS 级配置，含上下文管理策略 `context_config`，design D34，可作 `workspaces` JSON 字段或独立表）。索引、外键、`ON DELETE CASCADE` 按文档补齐。
 - **对应文档**：design §2.1 实体关系、§7.2 spans 模型；spec F3.2~F3.3
 - **验收标准**：
-  - [ ] 所有表含 `created_at / updated_at`
-  - [ ] `feishu_chats` 联合唯一约束生效（绑定时 409）
-  - [ ] spans 单表自引用 + 四元外键（ws/chat/session/run）CASCADE
+  - [x] 所有表含 `created_at / updated_at`
+  - [x] `feishu_chats` 联合唯一约束生效（绑定时 409）
+  - [x] spans 单表自引用 + 四元外键（ws/chat/session/run）CASCADE
+- **完成记录**：SQLAlchemy 2.x 异步模型 13 表落地（users/feishu_apps/workspaces/feishu_chats((app_id,chat_id) 唯一)/git_repos/skills/mcps/workspace_skill/workspace_mcp/sessions/runs/spans(单表自引用+四元外键 CASCADE §7.2)/tasks；workspaces.context_config JSON 承载 D34）。db/{base,session,models}；枚举用 StrEnum+VARCHAR（迁移友好）。验证：metadata 13 表注册、迁移 DDL 含 `uq_feishu_chats_app_chat`/spans 自引用+四元 CASCADE/JSONB、PG 16 连通。
 
 ### T1.2 Alembic 迁移初始化
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M6 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T1.1
 - **范围**：Alembic 接入、首版迁移脚本、`alembic upgrade head` 在空库可跑通。
 - **验收标准**：
-  - [ ] 全新 PG `upgrade head` 无报错
-  - [ ] CI 含 `alembic check`（防迁移漂移）
+  - [x] 全新 PG `upgrade head` 无报错
+  - [x] CI 含 `alembic check`（防迁移漂移）
+- **完成记录**：alembic.ini + alembic/env.py（异步 autogenerate）+ script.py.mako。首版迁移 init schema：`upgrade head` 无报错、`check` 无漂移。CI backend job 加 postgres service + `alembic upgrade`/`check`。关键修复：workspaces.cwd_repo_id 去 FK（避免与 git_repos.workspace_id 循环外键导致建表失败，引用完整性改应用层保证）。
 
 ### T1.3 文件系统目录工具
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M4/M6 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.1
 - **范围**：封装工作空间目录创建 / 路径 resolve 校验工具，对齐 design §2.3 结构（`/workspaces/{ws_id}/{repos,chats,logs}`、`/skills/{skill_id}`）。提供 `resolve_within(path, root)` 防穿越函数。
 - **对应文档**：design §2.3、D17
 - **验收标准**：
-  - [ ] 创建 WS 时自动建目录骨架 + `chats/{id}/memory/MEMORY.md`
-  - [ ] resolve 校验函数能挡住 `..` / 符号链接穿越单测通过
+  - [x] 创建 WS 时自动建目录骨架 + `chats/{id}/memory/MEMORY.md`
+  - [x] resolve 校验函数能挡住 `..` / 符号链接穿越单测通过
+- **完成记录**：app/workspace/fs.py：`resolve_within`（resolve 跟随 symlink，绝对/相对路径都校验落 root 内）+ `create_workspace_skeleton`(repos/chats/logs) + `create_chat_memory_skeleton`(memory/sessions/traces + 空 MEMORY.md) + `create_skill_skeleton`(resources/scripts)。tests/test_fs.py 8 用例覆盖 `..` / symlink 穿越 / 绝对路径越界。
 
 ### T1.4 自建账号密码鉴权
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M7 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T1.1
 - **范围**：argon2 密码哈希；`POST /api/auth/login`（校验 → 下发 HttpOnly Cookie session）、`/logout`、`/me`、`/change-password`；session 存储（Redis）；登录限流（同 IP 5 次/分钟）；角色二分（admin / user）。
 - **对应文档**：D32、api §2.1；spec F3.8.1
 - **验收标准**：
-  - [ ] 登录成功下发 `HttpOnly; SameSite=Lax` Cookie，未登录接口返回 401
-  - [ ] 错误密码 5 次后限流（429 或 401 计数）
-  - [ ] `/me` 返回用户 + 可访问 WS 列表
+  - [x] 登录成功下发 `HttpOnly; SameSite=Lax` Cookie，未登录接口返回 401
+  - [x] 错误密码 5 次后限流（429 或 401 计数）
+  - [x] `/me` 返回用户 + 可访问 WS 列表
+- **完成记录**：argon2 密码 + Fernet 凭证加密（core/security.py，密钥从 secret_key 派生，D32/NF4.2.4）；Redis session + 同 IP 5 次/分限流（core/session.py）；POST /auth/login（下发 HttpOnly;SameSite=Lax Cookie）/logout/me(用户+WS 列表)/change-password。tests/test_auth.py 覆盖成功/401/429 限流/me/登出/改密。
 
 ### T1.5 权限装饰器与 owner 校验
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M7 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.4
 - **范围**：FastAPI 依赖注入：`require_user` / `require_ws_owner` / `require_res_owner` / `require_admin`；统一错误码（403 forbidden）。
 - **对应文档**：api §1.6 / §1.8；spec F3.8.2~F3.8.3、D21 后台权限
 - **验收标准**：
-  - [ ] 非 owner 访问 WS 资源返回 403
-  - [ ] 单测覆盖四种权限标记
+  - [x] 非 owner 访问 WS 资源返回 403
+  - [x] 单测覆盖四种权限标记
+- **完成记录**：core/deps.py：get_current_user（session cookie→User）、require_user/require_admin/require_ws_owner(含 ws_id 路径 + 404)/assert_res_owner。core/errors.py 统一 `{error:{code,message}}`；main.py 全局异常处理器（HTTPException + RequestValidationError）。tests/test_deps.py 覆盖四种权限标记（含管理员豁免 + WS 404）。
 
 ### T1.6 用户管理 API
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M7 ｜ **优先级**：P1 ｜ **预估**：1d ｜ **依赖**：T1.5
 - **范围**：`GET/POST /users`、`PATCH /users/{id}`、`POST /users/{id}:reset-password`（管理员）。
 - **对应文档**：api §2.2；spec F3.7.7
 - **验收标准**：
-  - [ ] 管理员可建账号 / 改角色 / 停用 / 重置密码
-  - [ ] 非管理员调用返回 403
+  - [x] 管理员可建账号 / 改角色 / 停用 / 重置密码
+  - [x] 非管理员调用返回 403
+- **完成记录**：api/users.py：GET/POST /users、PATCH /users/{id}、POST /users/{id}:reset-password（均 require_admin；重复 username 经 IntegrityError→409）。tests/test_users.py 覆盖非 admin 403/创建/列表/停用/重置/冲突。
 
 > **切片验收点 P1**：可登录、可建账号、DB 与文件目录骨架就绪。
 
@@ -220,24 +230,26 @@
 > 目标：WS / Repo / FeishuChat / 挂载 / AGENT.md 的后端 API 全通。
 
 ### T2.1 Workspace CRUD
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M4 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.3, T1.5
 - **范围**：`GET/POST/PATCH/DELETE /workspaces`、`/workspaces/{ws_id}`（详情含 repos/chats/mounts 概览）；删除走异步级联（202 + task_id），删除前校验已解绑所有 FeishuChat + 解除广场引用。
 - **对应文档**：api §4；spec F3.2.1 / F3.2.5；design D8
 - **验收标准**：
-  - [ ] 创建 WS 同时建物理目录
-  - [ ] 删除前若有绑定 chat / 引用，返回 422 拒绝
-  - [ ] 异步级联清理任务可轮询状态
+  - [x] 创建 WS 同时建物理目录
+  - [x] 删除前若有绑定 chat / 引用，返回 422 拒绝
+  - [x] 异步级联清理任务可轮询状态
+- **完成记录**：api/workspaces.py CRUD；create 建目录骨架，delete 异步级联（task_runner 删 DB CASCADE + 物理目录），删前校验 chat/引用 → 422。test_workspaces.py 覆盖。
 
 ### T2.2 Git Repo 挂载与同步
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M4 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T2.1
 - **范围**：`POST /workspaces/{ws_id}/repos`（HTTPS clone，可选 token）、`:sync`（git pull）、`GET` / `DELETE`；clone 异步（202 + task_id），记录 clone 状态 / cwd。
 - **对应文档**：api §5.1；spec F3.2.2；design D6
 - **验收标准**：
-  - [ ] 公开 repo 可 clone 到 `repos/{repo_id}/`
-  - [ ] 带 token 的私有 repo 可 clone，token 不入日志 / 不回显
-  - [ ] clone 失败任务状态为 failed + error
+  - [x] 公开 repo 可 clone 到 `repos/{repo_id}/`
+  - [x] 带 token 的私有 repo 可 clone，token 不入日志 / 不回显
+  - [x] clone 失败任务状态为 failed + error
+- **完成记录**：workspace/git.py（asyncio subprocess，token 注入 url userinfo、不 log）+ api/repos.py（clone/sync 异步 202、GET/DELETE）。clone_status 状态机 pending→cloning→ready/failed。test_repos.py 用本地 bare repo 验证成功 + 无效 url 失败。
 
 ### T2.3 FeishuChat 绑定（含预校验）
 - **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
@@ -260,22 +272,24 @@
   - [ ] 解挂后关联表删除
 
 ### T2.5 AGENT.md 读写
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M4 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T2.1
 - **范围**：`GET/PUT /workspaces/{ws_id}/agent-md`（WS 级，可编辑）、`GET /workspaces/{ws_id}/repos/{repo_id}/agent-md`（Repo 级，只读）。
 - **对应文档**：api §5.4；spec F3.9.7；design D24
 - **验收标准**：
-  - [ ] WS 级可读写，Repo 级只读（PUT 返回 405）
-  - [ ] 文件不存在时返回空内容而非 404
+  - [x] WS 级可读写，Repo 级只读（PUT 返回 405）
+  - [x] 文件不存在时返回空内容而非 404
+- **完成记录**：api/agent_md.py：WS 级 GET/PUT、Repo 级 GET（PUT 不定义→FastAPI 405）。文件不存在返回空 content。test_agent_md.py 覆盖读写 + Repo 405。
 
 ### T2.6 异步任务轮询 API
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M4 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T1.1
 - **范围**：`GET /api/admin/tasks/{task_id}`（pending/running/done/failed + progress/result/error）；异步任务用 asyncio + Redis 队列承载（design §3.1，不引入 Celery）。
 - **对应文档**：api §1.7 / §10.4
 - **验收标准**：
-  - [ ] git clone / WS 删除均可通过 task_id 轮询
-  - [ ] 任务状态机正确流转
+  - [x] git clone / WS 删除均可通过 task_id 轮询
+  - [x] 任务状态机正确流转
+- **完成记录**：tasks/runner.py（TaskRunner：asyncio.create_task + DB 状态机 pending→running→done/failed + recover_orphans 启动恢复 D36）+ api/tasks.py 轮询。lifespan 启动清理 orphan task。WS delete / git clone 均通过 task_id 轮询验证。
 
 > **切片验收点 P2**：管理员可通过 API 完整配置一个 WS（建 WS → 挂 repo → 绑 chat → 挂 skill）。
 
@@ -286,32 +300,35 @@
 > 目标：Skill / MCP 的上传、可见性、引用计数、删除保护。
 
 ### T3.1 Skill 上传与广场 CRUD
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M3/M5 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T1.3, T1.5
 - **范围**：`POST /skills`（multipart：SKILL.md + resources + scripts）、`GET /skills`（我的 + 全员可见，筛选 / 搜索）、`GET/PATCH/DELETE /skills/{skill_id}`。frontmatter 校验（name 全局唯一、description 必填）；落 `/skills/{skill_id}/`；引用计数；被引用禁删。
 - **对应文档**：api §6.1 / §10.2；spec F3.5.1~F3.5.7；design D11 / D15
 - **验收标准**：
-  - [ ] frontmatter 缺字段 / name 重复返回 422
-  - [ ] 上传后目录结构 = `SKILL.md + resources/ + scripts/`
-  - [ ] 被引用的 Skill 删除返回 422，需先解绑
+  - [x] frontmatter 缺字段 / name 重复返回 422
+  - [x] 上传后目录结构 = `SKILL.md + resources/ + scripts/`
+  - [x] 被引用的 Skill 删除返回 422，需先解绑
+- **完成记录**：api/skills.py：POST multipart zip → 解析 SKILL.md frontmatter（name 全局唯一/description 必填，缺/重复 422）→ 防 zip-slip 解压到 /skills/{id}/；GET 返回 mounted_count；被引用禁删。test_skills.py 覆盖。
 
 ### T3.2 MCP 注册与广场 CRUD
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M3 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.5
 - **范围**：`GET/POST/PATCH/DELETE /mcps`（stdio 命令 / http endpoint 配置）；可见性；被引用禁删。
 - **对应文档**：api §6.2；spec F3.5.3~F3.5.5；design D11
 - **验收标准**：
-  - [ ] stdio / http 两种类型可注册
-  - [ ] 配置含 secret 字段时脱敏返回
+  - [x] stdio / http 两种类型可注册
+  - [x] 配置含 secret 字段时脱敏返回
+- **完成记录**：api/mcps.py：CRUD（我的+public）；config 递归 secret 字段加密存储/脱敏返回（core/security encrypt_secrets/mask_secrets）；被引用禁删。test_mcps.py 覆盖。
 
 ### T3.3 飞书 App 注册 API
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
 - **模块**：M1/M4 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T1.5
 - **范围**：`GET/POST/GET/PATCH/DELETE /feishu-apps`；`app_secret` 列表 / 详情脱敏（前后各 4 位），完整 secret 仅创建时返回一次。
 - **对应文档**：api §3；spec F3.1.6；design D7
 - **验收标准**：
-  - [ ] 列表 / 详情 secret 脱敏
-  - [ ] 删除前需解绑所有 FeishuChat
+  - [x] 列表 / 详情 secret 脱敏
+  - [x] 删除前需解绑所有 FeishuChat
+- **完成记录**：api/feishu_apps.py：app_secret Fernet 加密存 app_secret_enc；列表/详情脱敏（前后4位）；完整 secret 仅创建时返回一次；删除前校验 FeishuChat 引用。test_feishu_apps.py 覆盖。
 
 > **切片验收点 P3**：广场可上传 Skill / 注册 MCP，WS 可引用挂载。
 

@@ -1,0 +1,63 @@
+"""Session / Run 模型（1 Session : 1 Run，D23 / §6.6 状态机）。
+
+- Session：上下文单元，会话历史落 JSONL（chats/{feishu_chat_id}/sessions/{id}.jsonl）。
+- Run：一次 Agent Loop 实例，1:1 绑定 Session。status 状态机见 §6.6：
+  queued → running → completed / error / interrupted / timeout。
+"""
+
+import enum
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base, TimestampMixin
+
+
+class RunStatus(enum.StrEnum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    error = "error"
+    interrupted = "interrupted"
+    timeout = "timeout"
+
+
+class Session(Base, TimestampMixin):
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    feishu_chat_id: Mapped[int] = mapped_column(
+        ForeignKey("feishu_chats.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+
+class Run(Base, TimestampMixin):
+    __tablename__ = "runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    # 1 Session : 1 Run（D23）—— session_id 唯一
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    feishu_chat_id: Mapped[int] = mapped_column(
+        ForeignKey("feishu_chats.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default=RunStatus.queued.value, nullable=False, index=True
+    )
+    # 触发消息的飞书 message_id（兼作去重键，D38）
+    trigger_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(String(1024), nullable=True)

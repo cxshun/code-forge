@@ -1,0 +1,120 @@
+"""FastAPI 应用入口。
+
+对齐 design §3.5：``lifespan`` 承载启动恢复（D36）与飞书多 App WebSocket 连接池起停
+（D7），HTTP 中间件做请求日志。挂载 health / auth（``/api``）/ admin（``/api/admin``）
+路由；全局异常处理器把错误统一为 ``{"error": {...}}``（api §1.3）。
+"""
+
+import time
+import uuid
+from contextlib import asynccontextmanager
+
+import structlog
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app import __version__
+from app.api.agent_md import router as agent_md_router
+from app.api.auth import router as auth_router
+from app.api.feishu_apps import router as feishu_apps_router
+from app.api.health import router as health_router
+from app.api.mcps import router as mcps_router
+from app.api.repos import router as repos_router
+from app.api.skills import router as skills_router
+from app.api.tasks import router as tasks_router
+from app.api.users import router as users_router
+from app.api.workspaces import router as workspaces_router
+from app.config import settings
+from app.core.errors import CODE_BY_STATUS
+from app.core.logging import configure_logging, get_logger
+from app.tasks.runner import task_runner
+
+# 模块导入即配置日志，确保任何入口（含测试）拿到结构化 logger。
+configure_logging()
+log = get_logger("app.main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("app.starting", env=settings.app_env, version=__version__)
+    # 启动恢复（D36）：遗留异步任务标 failed，避免幽灵任务
+    orphans = await task_runner.recover_orphans()
+    if orphans:
+        log.info("app.recovered_orphan_tasks", count=orphans)
+    # TODO(NF4.4.4 / D36)：进一步清理孤儿 Run（标 interrupted）、强制释放残留 WS 锁。
+    # TODO(D7 / T4.2)：为每个已注册飞书 App 启动独立 WebSocket 长连接。
+    yield
+    log.info("app.stopping")
+    # TODO(T4.2)：优雅关闭飞书 WS 连接池。
+
+
+app = FastAPI(
+    title="Code Forge",
+    description="Cloud multi-tenant Coding Agent SaaS",
+    version=__version__,
+    lifespan=lifespan,
+)
+
+app.include_router(health_router)
+app.include_router(auth_router, prefix="/api")
+app.include_router(users_router, prefix="/api/admin")
+app.include_router(tasks_router, prefix="/api/admin")
+app.include_router(workspaces_router, prefix="/api/admin")
+app.include_router(mcps_router, prefix="/api/admin")
+app.include_router(feishu_apps_router, prefix="/api/admin")
+app.include_router(agent_md_router, prefix="/api/admin")
+app.include_router(repos_router, prefix="/api/admin")
+app.include_router(skills_router, prefix="/api/admin")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if isinstance(exc.detail, dict) and isinstance(exc.detail.get("error"), dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    code = CODE_BY_STATUS.get(exc.status_code, "error")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": code, "message": str(exc.detail)}},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "validation_failed",
+                "message": "请求参数校验失败",
+                "details": exc.errors(),
+            }
+        },
+    )
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    """请求日志中间件：注入 request_id 并记录 method/path/status/耗时。"""
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("request.error", method=request.method, path=request.url.path)
+        raise
+
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    response.headers["x-request-id"] = request_id
+    log.info(
+        "request",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        elapsed_ms=round(elapsed_ms, 2),
+    )
+    return response

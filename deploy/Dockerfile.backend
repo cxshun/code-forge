@@ -1,0 +1,21 @@
+# Code Forge 后端镜像（context = backend/）。
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装 uv（与本地版本对齐）
+COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
+ENV UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+# 先装依赖（利用层缓存）
+COPY pyproject.toml README.md ./
+RUN uv sync --no-dev --no-install-project
+
+# 拷贝源码并安装项目本体
+COPY app ./app
+COPY alembic ./alembic
+RUN uv sync --no-dev
+
+EXPOSE 8000
+CMD ["uv", "run", "--no-dev", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
