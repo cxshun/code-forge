@@ -70,7 +70,8 @@ def parse_message_event(
         if m.get("id", {}).get("open_id")
     }
     mentioned_ids |= set(_AT_USER_RE.findall(content))
-    at_bot = bool(bot_open_id and bot_open_id in mentioned_ids)
+    # bot_open_id 未知时放宽：任何 @ 都触发（MVP 验证用；接入层应获取 bot open_id 精确匹配）
+    at_bot = bot_open_id in mentioned_ids if bot_open_id else bool(mentioned_ids)
 
     parent_id = message.get("parent_id") or message.get("root_id")
     return MessageContext(

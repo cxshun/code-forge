@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # 飞书开放平台（占位，T3.3 / T4.1 用）
     feishu_base_url: str = "https://open.feishu.cn/open-apis"
 
+    # 飞书测试凭证（本地集成验证用，从 .env 读取；勿提交真实值）
+    feishu_test_app_id: str = ""
+    feishu_test_app_secret: str = ""
+    feishu_test_chat_id: str = ""
+
     # Anthropic（占位，T5.1 用；国内可切 GLM，见 D3）
     anthropic_api_key: str = ""
 
