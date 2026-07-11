@@ -9,6 +9,9 @@
 - ``_create_run``：建 Session + Run（queued），供直接调用与 RunQueue 入队共用
 - ``_execute_run``：抢到锁后的运行阶段（running → completed/interrupted/error），
   接受外部 ``abort`` 事件以支持 T6.3 运行中中断；锁由调用方 try/finally 释放
+
+埋点（T9.4）：``_execute_run`` 开头 ``init_trace`` 初始化 trace 上下文，
+整个 Run 包裹在 ``span("run")`` 根 span 中；结束前 ``flush_trace`` 确保 span 入库。
 """
 
 import asyncio
@@ -25,6 +28,8 @@ from app.core.redis_client import redis as redis_client
 from app.db.models import Run, RunStatus, Session
 from app.db.session import async_session_factory
 from app.memory.loader import load_context_injections
+from app.observability.buffer import span_buffer
+from app.observability.tracer import clear_trace, init_trace, span
 from app.providers.base import Message, Provider
 from app.tools.base import ToolContext
 from app.tools.registry import ToolRegistry
@@ -116,40 +121,45 @@ async def _execute_run(
 
     ``abort`` 被 set 时 Loop 在下一检查点抛 InterruptedError（T6.3），本函数将其标
     interrupted 并 re-raise；其余异常标 error 并 re-raise。锁的释放由调用方负责。
+
+    埋点（T9.4）：``init_trace`` 设置 trace 上下文 → ``span("run")`` 根 span →
+    ``flush_trace`` 确保 span 入库 → ``clear_trace`` 清理。
     """
     await _set_run_status(run_id, RunStatus.running.value, started=True)
 
+    trace_ctx = init_trace(ws_id, feishu_chat_id, session_id, run_id)
     try:
-        ws_agent_md, repo_agent_md, memory_index = load_context_injections(
-            ws_id, feishu_chat_id, cwd
-        )
-        system = build_system_prompt(
-            ws_agent_md,
-            repo_agent_md,
-            memory_index,
-            skill_descriptions,
-            feishu_chat_id=feishu_chat_id,
-        )
-        ctx = RunContext(
-            system=system,
-            messages=[Message(role="user", content=user_message)],
-            tool_ctx=ToolContext(
-                ws_id=ws_id,
-                workspaces_root=settings.workspaces_root,
-                cwd=cwd,
+        async with span("run"):
+            ws_agent_md, repo_agent_md, memory_index = load_context_injections(
+                ws_id, feishu_chat_id, cwd
+            )
+            system = build_system_prompt(
+                ws_agent_md,
+                repo_agent_md,
+                memory_index,
+                skill_descriptions,
                 feishu_chat_id=feishu_chat_id,
-            ),
-            run_id=run_id,
-            abort=abort or asyncio.Event(),
-        )
+            )
+            ctx = RunContext(
+                system=system,
+                messages=[Message(role="user", content=user_message)],
+                tool_ctx=ToolContext(
+                    ws_id=ws_id,
+                    workspaces_root=settings.workspaces_root,
+                    cwd=cwd,
+                    feishu_chat_id=feishu_chat_id,
+                ),
+                run_id=run_id,
+                abort=abort or asyncio.Event(),
+            )
 
-        final = await run_loop(
-            provider, ctx, registry, on_text=on_text, on_tool_call=on_tool_call
-        )
+            final = await run_loop(
+                provider, ctx, registry, on_text=on_text, on_tool_call=on_tool_call
+            )
 
-        save_session_jsonl(ws_id, feishu_chat_id, session_id, ctx.messages)
-        await _set_run_status(run_id, RunStatus.completed.value)
-        return final
+            save_session_jsonl(ws_id, feishu_chat_id, session_id, ctx.messages)
+            await _set_run_status(run_id, RunStatus.completed.value)
+            return final
 
     except InterruptedError as e:
         await _set_run_status(run_id, RunStatus.interrupted.value, error=str(e))
@@ -158,6 +168,13 @@ async def _execute_run(
         # 状态在此设定；日志由调用方（start_run / RunQueue）记录，避免双重日志
         await _set_run_status(run_id, RunStatus.error.value, error=str(e))
         raise
+    finally:
+        # 确保 trace 数据落库（§7.4：Run 结束前 flush 本 trace）
+        try:
+            await span_buffer.flush_trace(trace_ctx.trace_id)
+        except Exception:
+            log.warning("flush trace failed for run %d", run_id, exc_info=True)
+        clear_trace()
 
 
 async def start_run(

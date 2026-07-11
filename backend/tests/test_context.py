@@ -20,6 +20,14 @@ class _FakeProvider(Provider):
     def context_window(self) -> int:
         return self._window
 
+    @property
+    def model(self) -> str:
+        return "fake-model"
+
+    @property
+    def name(self) -> str:
+        return "fake"
+
     async def count_tokens(self, messages, system=None):
         # 返回预设的 tokens（按 messages 对象 id 查），便于测试触发阈值
         return Usage(input_tokens=self._tokens_map.get(id(messages), 0))

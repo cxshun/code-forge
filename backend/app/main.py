@@ -5,6 +5,7 @@
 路由；全局异常处理器把错误统一为 ``{"error": {...}}``（api §1.3）。
 """
 
+import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -21,18 +22,24 @@ from app.api.auth import router as auth_router
 from app.api.chats import router as chats_router
 from app.api.feishu_apps import router as feishu_apps_router
 from app.api.health import router as health_router
+from app.api.insights import router as insights_router
 from app.api.mcps import router as mcps_router
 from app.api.memory import router as memory_router
+from app.api.monitoring import router as monitoring_router
 from app.api.mounts import router as mounts_router
 from app.api.repos import router as repos_router
 from app.api.runs import router as runs_router
 from app.api.skills import router as skills_router
 from app.api.tasks import router as tasks_router
+from app.api.traces import router as traces_router
 from app.api.users import router as users_router
 from app.api.workspaces import router as workspaces_router
 from app.config import settings
 from app.core.errors import CODE_BY_STATUS
 from app.core.logging import configure_logging, get_logger
+from app.observability.buffer import span_buffer
+from app.observability.monitor import monitor_loop
+from app.observability.ttl import ttl_loop
 from app.tasks.runner import task_runner
 
 # 模块导入即配置日志，确保任何入口（含测试）拿到结构化 logger。
@@ -47,10 +54,19 @@ async def lifespan(app: FastAPI):
     orphans = await task_runner.recover_orphans()
     if orphans:
         log.info("app.recovered_orphan_tasks", count=orphans)
+    # SpanBuffer 后台消费协程（§7.4 批量 UPSERT）
+    span_buffer.start()
+    # 告警监控循环（§7.7 / T10.3）
+    monitor_task = asyncio.create_task(monitor_loop())
+    # TTL 清理循环（§7.8 / T10.4）
+    ttl_task = asyncio.create_task(ttl_loop())
     # TODO(NF4.4.4 / D36)：进一步清理孤儿 Run（标 interrupted）、强制释放残留 WS 锁。
     # TODO(D7 / T4.2)：为每个已注册飞书 App 启动独立 WebSocket 长连接。
     yield
     log.info("app.stopping")
+    monitor_task.cancel()
+    ttl_task.cancel()
+    await span_buffer.stop()
     # TODO(T4.2)：优雅关闭飞书 WS 连接池。
 
 
@@ -75,6 +91,9 @@ app.include_router(memory_router, prefix="/api/admin")
 app.include_router(chats_router, prefix="/api/admin")
 app.include_router(mounts_router, prefix="/api/admin")
 app.include_router(skills_router, prefix="/api/admin")
+app.include_router(traces_router, prefix="/api/admin")
+app.include_router(insights_router, prefix="/api/admin")
+app.include_router(monitoring_router, prefix="/api/admin")
 
 
 @app.exception_handler(StarletteHTTPException)

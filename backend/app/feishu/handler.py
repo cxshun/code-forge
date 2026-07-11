@@ -130,7 +130,7 @@ async def handle_message(
         ws_id = chat.workspace_id
         feishu_chat_id = chat.id
         ws = await db.get(Workspace, ws_id)
-        registry, skill_descriptions = await build_registry(db, ws_id)
+        registry, skill_descriptions, mcp_cleanup = await build_registry(db, ws_id)
         cwd = await resolve_cwd(db, ws)
 
     client = FeishuClient(app_id, app_secret)
@@ -153,6 +153,18 @@ async def handle_message(
     user_message = f"{quote}\n{ctx.text}" if quote else ctx.text
 
     callbacks = FeishuRunCallbacks(client, ctx.chat_id, footer)
+
+    # MCP 连接在 Run 结束后关闭（成功 / 失败 / 中断 / 取消均执行）
+    orig_on_done = callbacks.on_done
+
+    async def _on_done_with_cleanup(exc: Exception | None) -> None:
+        try:
+            if mcp_cleanup is not None:
+                await mcp_cleanup()
+        except Exception:
+            log.exception("mcp cleanup failed")
+        await orig_on_done(exc)
+
     run_id = await run_queue.submit(
         ws_id=ws_id,
         feishu_chat_id=feishu_chat_id,
@@ -166,7 +178,7 @@ async def handle_message(
         on_tool_call=callbacks.on_tool_call,
         on_queue=callbacks.on_queue,
         on_start=callbacks.on_start,
-        on_done=callbacks.on_done,
+        on_done=_on_done_with_cleanup,
     )
     log.info(
         "submitted run %d: app=%s chat=%s ws=%s text=%r quote=%s",

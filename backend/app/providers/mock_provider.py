@@ -42,6 +42,14 @@ class MockProvider(Provider):
     def context_window(self) -> int:
         return self._ctx_window
 
+    @property
+    def model(self) -> str:
+        return "mock-model"
+
+    @property
+    def name(self) -> str:
+        return "mock"
+
     async def chat(
         self,
         messages: list[Message],

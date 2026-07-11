@@ -104,6 +104,34 @@ def mask_secrets(value):
     return value
 
 
+def decrypt_secrets(value):
+    """递归：dict / list 中名字命中 SECRET_KEY_NAMES 的加密字符串值解密为明文。
+
+    与 ``encrypt_secrets`` 对称，用于 MCP 等需要还原 config 原值连接外部服务的场景。
+    解密失败（非密文）时原样返回，避免异常阻断流程。
+    """
+    if isinstance(value, dict):
+        return {
+            k: (
+                _safe_decrypt(v)
+                if k.lower() in SECRET_KEY_NAMES and isinstance(v, str)
+                else decrypt_secrets(v)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [decrypt_secrets(v) for v in value]
+    return value
+
+
+def _safe_decrypt(ciphertext: str) -> str:
+    """解密失败（非密文）时原样返回，不抛异常。"""
+    try:
+        return decrypt_secret(ciphertext)
+    except Exception:
+        return ciphertext
+
+
 def _safe_mask(ciphertext: str) -> str:
     """解密失败（非密文）时退化为整体脱敏，避免异常外泄。"""
     try:

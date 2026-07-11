@@ -3,6 +3,7 @@
 导入即注册到 ``Base.metadata``，供 Alembic autogenerate 与多租户 listener 使用。
 """
 
+from app.db.models.alert_rule import AlertRule, RuleType
 from app.db.models.feishu_app import FeishuApp
 from app.db.models.mcp import MCP
 from app.db.models.session_run import Run, RunStatus, Session
@@ -21,10 +22,12 @@ from app.db.models.workspace import (
 
 __all__ = [
     "MCP",
+    "AlertRule",
     "CloneStatus",
     "FeishuApp",
     "FeishuChat",
     "GitRepo",
+    "RuleType",
     "Run",
     "RunStatus",
     "Session",

@@ -18,6 +18,7 @@ data/
 .DS_Store
 .idea/
 .vscode/
+.qoder/
 
 # Test / lint cache
 .pytest_cache/

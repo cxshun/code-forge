@@ -51,6 +51,21 @@ const router = createRouter({
           component: () => import('@/views/sessions/SessionHistoryView.vue'),
         },
         {
+          path: 'traces',
+          name: 'traces',
+          component: () => import('@/views/traces/TracesView.vue'),
+        },
+        {
+          path: 'insights',
+          name: 'insights',
+          component: () => import('@/views/insights/InsightsView.vue'),
+        },
+        {
+          path: 'monitoring',
+          name: 'monitoring',
+          component: () => import('@/views/monitoring/MonitoringView.vue'),
+        },
+        {
           path: 'users',
           name: 'users',
           component: () => import('@/views/users/UsersView.vue'),

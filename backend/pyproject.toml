@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.28",
     "structlog>=24.4",
     "anthropic>=0.40",
+    "mcp>=1.0",
     "lark-oapi>=1.4",
     "argon2-cffi>=23.1",
     "cryptography>=43.0",

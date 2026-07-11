@@ -85,6 +85,14 @@ class AnthropicProvider(Provider):
     def context_window(self) -> int:
         return self._ctx_window
 
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def name(self) -> str:
+        return "anthropic"
+
     async def chat(
         self,
         messages: list[Message],

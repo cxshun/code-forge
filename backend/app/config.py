@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     session_cookie_name: str = "cf_session"
     session_ttl_seconds: int = 60 * 60 * 24 * 7  # 7 天
 
+    # TTL 清理（T10.4）
+    span_ttl_days: int = 30
+    payload_ttl_days: int = 7
+    max_runs_per_chat: int = 500
+
     @property
     def is_prod(self) -> bool:
         return self.app_env == "prod"

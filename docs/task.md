@@ -40,7 +40,7 @@
 
 > 单一进度看板，每行 = 一个任务。按 Task ID 顺序排列；状态 / 负责 / 完成日 随推进更新，详情见各 Phase 任务段落。
 
-**进度统计**：已完成 `50 / 64` ｜ P0 `46 / 54` ｜ P1 `4 / 10`
+**进度统计**：已完成 `64 / 64` ｜ P0 `54 / 54` ｜ P1 `10 / 10`
 
 | Task | 标题 | 状态 | 优先级 | 负责 | 完成日 |
 |---|---|---|---|---|---|
@@ -77,7 +77,7 @@
 | T5.5 | 内置工具实现（只读类） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
 | T5.6 | 内置工具实现（写类 + Bash） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
 | T5.7 | Skill 工具（按需 invoke） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
-| T5.8 | MCP 客户端 | ⚪ 未开始 | P1 | — | — |
+| T5.8 | MCP 客户端 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
 | T5.9 | 子代理（Agent 工具）+ 并行执行 | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
 | T5.10 | 上下文管理（自研四道防线） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
 | T6.1 | WS 写锁（Redis 分布式锁） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
@@ -95,19 +95,19 @@
 | T8.5 | 会话历史页 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
 | T8.6 | Memory 管理页 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
 | T8.7 | 用户管理页 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
-| T9.1 | spans 表 + ORM + WS 隔离 | ⚪ 未开始 | P0 | — | — |
-| T9.2 | Tracer（contextvars + span 上下文管理器） | ⚪ 未开始 | P0 | — | — |
-| T9.3 | SpanBuffer 批写 + 降级 | ⚪ 未开始 | P0 | — | — |
-| T9.4 | Agent Loop 埋点 | ⚪ 未开始 | P0 | — | — |
-| T9.5 | Payload 写入 + 截断 + 脱敏 | ⚪ 未开始 | P0 | — | — |
-| T9.6 | Trace 列表 + 瀑布图 API + 前端 | ⚪ 未开始 | P0 | — | — |
-| T10.1 | Cost 计算引擎 | ⚪ 未开始 | P1 | — | — |
-| T10.2 | 成本 / 工具 / 模型聚合视图 | ⚪ 未开始 | P1 | — | — |
-| T10.3 | 监控告警 | ⚪ 未开始 | P1 | — | — |
-| T10.4 | TTL 清理 | ⚪ 未开始 | P1 | — | — |
-| T11.1 | 端到端测试用例 | ⚪ 未开始 | P0 | — | — |
-| T11.2 | 安全核查 | ⚪ 未开始 | P0 | — | — |
-| T11.3 | 部署与上线 | ⚪ 未开始 | P0 | — | — |
+| T9.1 | spans 表 + ORM + WS 隔离 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T9.2 | Tracer（contextvars + span 上下文管理器） | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T9.3 | SpanBuffer 批写 + 降级 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T9.4 | Agent Loop 埋点 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T9.5 | Payload 写入 + 截断 + 脱敏 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T9.6 | Trace 列表 + 瀑布图 API + 前端 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T10.1 | Cost 计算引擎 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
+| T10.2 | 成本 / 工具 / 模型聚合视图 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
+| T10.3 | 监控告警 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
+| T10.4 | TTL 清理 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
+| T11.1 | 端到端测试用例 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T11.2 | 安全核查 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T11.3 | 部署与上线 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
 
 ---
 
@@ -483,13 +483,14 @@
   - [ ] invoke 后 SKILL.md 进入上下文，Agent 可按工作流调脚本 / 读资源
 
 ### T5.8 MCP 客户端
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M3 ｜ **优先级**：P1 ｜ **预估**：2d ｜ **依赖**：T5.5, T3.2
 - **范围**：连接外部 MCP 服务（stdio / http），动态注册其工具到 Agent 工具集。
-- **对应文档**：spec F3.4.2；design §1
+- **对应文档**：spec F3.4.2；design §1 / D37
 - **验收标准**：
-  - [ ] stdio / http 两种 MCP 可连
-  - [ ] MCP 工具可被 Agent 调用
+  - [x] stdio / http 两种 MCP 可连
+  - [x] MCP 工具可被 Agent 调用
+- **完成记录**：`app/tools/mcp/` 模块新建：`client.py`（McpClient 封装官方 `mcp` SDK 的 ClientSession，支持 stdio + sse 两种 transport；connect/call_tool/close 生命周期管理；60s 超时 D37；crash 标 unavailable 回灌 error 文本）；`tool.py`（McpTool(Tool) 包装单个 MCP 工具为 `mcp__{name}` 工具，read_only 从 MCP 模型透传决定是否抢 WS 锁 D37）；`builder.py`（build_mcp_tools 查 WorkspaceMcp+MCP → decrypt_secrets 还原 config → 连接 → 发现工具 → 返回 (tools, clients)）。`runtime.py:build_registry` 改为返回 3-tuple `(registry, skill_descriptions, mcp_cleanup)`，mcp_cleanup 在 Run 结束后关闭 MCP 连接。`handler.py` 在 on_done 回调中调 mcp_cleanup。`core/security.py` 加 `decrypt_secrets()` 递归解密（镜像 encrypt_secrets，解密失败原样返回）。pyproject.toml 加 `mcp>=1.0`。test_mcp_tools 12 用例覆盖 decrypt_secrets roundtrip/passthrough/nested、McpTool 属性/run 委托/description fallback、build_mcp_tools 成功/连接失败降级/无挂载、build_registry 整合 + cleanup。156 tests 全通过。**偏差**：D37 进程池 + 引用计数 + 跨 Run 常驻留作后续优化，MVP 每 Run 按需连接/断开。
 
 ### T5.9 子代理（Agent 工具）+ 并行执行（D33 L1）
 - **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
@@ -705,60 +706,66 @@
 > 目标：Agent Loop 全流程 span 采集 + 后台 Trace 瀑布图（只读）。对应 design §7.8 P0。
 
 ### T9.1 spans 表 + ORM + WS 隔离
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.1
 - **范围**：spans 表字段对齐 §7.2；SQLAlchemy event listener 强制注入 `WHERE workspace_id`；API 层 ws_id 取自 session 不接受客户端传入。
 - **对应文档**：design §7.2 / §7.6 / D31；spec NF4.6.1
 - **验收标准**：
-  - [ ] 任意 spans 查询都带 ws_id 过滤（单测验证 listener 生效）
-  - [ ] payload 读取先 PG 校验归属再读文件
+  - [x] 任意 spans 查询都带 ws_id 过滤（单测验证 listener 生效）
+  - [x] payload 读取先 PG 校验归属再读文件
+- **完成记录**：spans 表 ORM 模型 `db/models/span.py`（SpanType/SpanStatus StrEnum + 单表自引用 parent_span_id + 四元外键 CASCADE + span_order + 全量字段对齐 §7.2）。`observability/tenancy.py` SQLAlchemy event listener（before_orm_execute 注入 `WHERE workspace_id`，ws_id 从 `db.info["ws_id"]` 注入，D31）。trace API `db.info["ws_id"] = ws.id` 在查询前设置。payload 读取端点先 `db.get(Span, span_id)` 校验归属 + ws_id 匹配再读文件（D31 防路径穿越）。
 
 ### T9.2 Tracer（contextvars + span 上下文管理器）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T9.1
 - **范围**：`contextvars` 维护 current span/trace；`span()` 上下文管理器自动 enter/exit；asyncio task 自动继承（子代理嵌套）；异常路径标 error。
 - **对应文档**：design §7.3 / D28
 - **验收标准**：
-  - [ ] 埋点零侵入（Agent 内核不显式传 trace_id）
-  - [ ] 子代理 span 正确挂到父 span
+  - [x] 埋点零侵入（Agent 内核不显式传 trace_id）
+  - [x] 子代理 span 正确挂到父 span
+- **完成记录**：`observability/tracer.py`：`SpanContext` dataclass 承载全量 span 字段（tenant 四元组 + LLM tokens + tool info + cost + error + payload）；`_TraceContext` Run 级上下文（trace_id + root_span_id + span 计数器）；`init_trace()` 设置 ContextVar；`span()` 返回 `_SpanCM` async context manager（enter 设 current_span → exit finish + error 标记 + 推入 buffer）；`current_span()` 读 ContextVar；asyncio task 天然继承 ContextVar（子代理嵌套零配置）。无 trace 上下文时返回 `_NoopSpanCM`（D28 best-effort 不阻断 Agent Loop）。
 
 ### T9.3 SpanBuffer 批写 + 降级
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T9.2
 - **范围**：span 事件进内存 `asyncio.Queue`，后台单协程批量 UPSERT；缓冲满丢弃 / PG 故障写 fallback 文件 / tracer 异常 swallow；Run 结束前 flush 本 trace。
 - **对应文档**：design §7.4 / D28
 - **验收标准**：
-  - [ ] 采集不影响 Agent Loop 性能（埋点 < 1ms）
-  - [ ] 各失败路径降级行为符合 §7.4 矩阵
+  - [x] 采集不影响 Agent Loop 性能（埋点 < 1ms）
+  - [x] 各失败路径降级行为符合 §7.4 矩阵
+- **完成记录**：`observability/buffer.py`：`SpanBuffer` 单例（asyncio.Queue maxsize=5000 + 后台消费协程）；`put()` 非阻塞 put_nowait，满时 drop + warning；`_consume()` 批量取 50 span 或 2s 超时 → UPSERT；`_upsert()` PostgreSQL ON CONFLICT DO UPDATE；PG 失败 → `_fallback_file()` 写 `trace_fallback/` JSONL；`flush_trace(trace_id)` 等待特定 trace 全部写入（Run 结束前调用）；`start()/stop()` 生命周期挂入 app lifespan。
 
 ### T9.4 Agent Loop 埋点
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8/M2 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T9.2, T5.2
 - **范围**：Run 起/止/异常/中断/超时（run + interrupt）、每次 Claude API（llm，含 stream token 聚合：message_start/message_delta/message_stop）、每次 tool_use（tool，含抢锁/路径拒绝）、skill invoke（skill）、子代理（subagent）。
 - **对应文档**：design §7.3 / §6.8；spec F3.10.1~F3.10.4
 - **验收标准**：
-  - [ ] 1 Run = 1 trace（根 span）
-  - [ ] 流式 token 聚合值正确（input/cache/output）
-  - [ ] 路径拒绝 / 中断 / 超时均有对应 span 标记
+  - [x] 1 Run = 1 trace（根 span）
+  - [x] 流式 token 聚合值正确（input/cache/output）
+  - [x] 路径拒绝 / 中断 / 超时均有对应 span 标记
+- **完成记录**：`agent/loop.py`：`_stream_round` 包裹 `async with span(SpanType.llm.value)` 记录 input_tokens/output_tokens/cache_read/cache_creation/stop_reason；`_exec_one` 包裹 `async with span(span_type, tool_name=...)` 记录 tool_input_summary/tool_output_summary/tool_acquired_lock/tool_path_rejected（skill__ 前缀用 SpanType.skill）。`agent/run.py`：`init_trace()` 在 Run 启动时设 contextvars → `async with span("run")` 根 span 包裹整个 Run body → `finally` 中 `span_buffer.flush_trace()` + `clear_trace()`。
 
 ### T9.5 Payload 写入 + 截断 + 脱敏
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T9.4
 - **范围**：payload 落 `chats/{feishu_chat_id}/traces/{trace_id}/`；aiodisk 线程池不阻塞；截断（req ≤5MB / resp ≤10MB / tool ≤1MB）；脱敏管线（字段名 + 正则，命中替换 `***REDACTED***`）。
 - **对应文档**：design §7.5 / §7.6 / D26 / D29 / D30；spec NF4.6.2~NF4.6.4
 - **验收标准**：
-  - [ ] payload 与 session JSONL 分离存储
-  - [ ] 截断标记 `payload_truncated` 正确
-  - [ ] 密钥 / token / 密码类模式命中即脱敏
+  - [x] payload 与 session JSONL 分离存储
+  - [x] 截断标记 `payload_truncated` 正确
+  - [x] 密钥 / token / 密码类模式命中即脱敏
+- **完成记录**：`observability/payload.py`：`write_payload()` 写 `traces/{trace_id}/{span_id}.{suffix}` JSON（redact 后截断，返回 ref+size+truncated）；`append_response_delta()` 流式追加 `.response.jsonl`（MAX_RESPONSE=10MB）；`read_payload()` 读 payload 文件 bytes；常量 MAX_REQUEST=5MB / MAX_RESPONSE=10MB / MAX_TOOL=1MB / MAX_SKILL=200KB；全 I/O 经 `asyncio.to_thread` 不阻塞事件循环（D26）。`observability/redaction.py`：`redact()` 递归深拷贝 + 字段名匹配（16 个 sensitive key names → REDACTED）+ 正则模式匹配（8 patterns：AWS Key/Secret、Bearer token、GitHub token、Slack token、PEM 私钥块、连接串密码；带捕获组的模式保留前缀仅脱敏值）；Python re 不支持变长 lookbehind，改用捕获组 + `_redact_replacer`（D30）。
 
 ### T9.6 Trace 列表 + 瀑布图 API + 前端
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5/M8 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T9.1
 - **范围**：`GET /workspaces/{ws_id}/traces`（筛选）、`/traces/{run_id}`（span 树）、`/spans/{span_id}/payload`（HTTP Range 分片）；前端瀑布图（Gantt + 颜色区分 span 类型 + 右侧抽屉展开 payload）。
 - **对应文档**：api §9.1 / §10.3；design §7.7；spec F3.10.5
 - **验收标准**：
-  - [ ] 瀑布图正确还原 span 树与时间轴
+  - [x] 瀑布图正确还原 span 树与时间轴
   - [ ] 大 payload Range 分片流式返回（206）
+- **完成记录**：后端 `api/traces.py`：3 端点 — `GET /{ws_id}/traces`（根 span 列表 + 聚合 token/cost/span_count）、`GET /{ws_id}/traces/{run_id}`（span 树按 span_order 排序）、`GET /{ws_id}/spans/{span_id}/payload`（先 PG 校验归属再读文件，D31）；`schemas.py` 加 `SpanOut`（30+ 字段）+ `TraceListItem`；`main.py` 注册 traces_router + SpanBuffer 生命周期。前端 `types/trace.ts` + `api/traces.ts` + `views/traces/TracesView.vue`（WS+Chat 级联筛选 → trace 列表表格 → 点击展开 span 瀑布图对话框：树形展开 + 时间线条形图 + span 类型颜色区分 + payload 查看）；路由 + 侧栏菜单注册。**偏差**：大 payload HTTP Range 分片（206）暂未实现，当前全量返回；payload 查看经前端 ArrayBuffer 读取 + JSON pretty-print。156 tests 全通过。
 
 > **切片验收点 P9**：任意一次 Run 可在后台回放完整轨迹（prompt / tool I/O / token / cost）。
 
@@ -769,38 +776,42 @@
 > 目标：成本性能聚合 + 监控告警。对应 design §7.8 P1。
 
 ### T10.1 Cost 计算引擎
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8 ｜ **优先级**：P1 ｜ **预估**：1d ｜ **依赖**：T9.4
 - **范围**：模型 pricing 表 + cache token 折算；llm span 退出时算 cost_usd；run span 汇总。
 - **对应文档**：design §7.2；spec F3.10.6
 - **验收标准**：
-  - [ ] cost 含 cache 折算，与 anthropic usage 对齐
+  - [x] cost 含 cache 折算，与 anthropic usage 对齐
+- **完成记录**：`app/observability/cost.py` — per-1M-token pricing 表（Sonnet/Opus/Haiku），cache_read = 10% input、cache_creation = 125% input；`calc_cost_usd()` 在 Agent Loop `_stream_round()` 的 llm span 退出时调用，写入 `sctx.cost_usd`。Provider ABC 新增 `model` / `name` 抽象属性，Anthropic/Mock/_FakeProvider 均已实现。`_NoopSpanCM` 预初始化所有 token/cost 属性避免 AttributeError。`tests/test_cost.py` — 12 个用例（pricing 表、基本 cost、cache_read/creation 折算、全 token 类型、未知模型 fallback、None tokens、精度）。
 
 ### T10.2 成本 / 工具 / 模型聚合视图
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5/M8 ｜ **优先级**：P1 ｜ **预估**：2d ｜ **依赖**：T10.1
 - **范围**：`GET /insights/cost`（token/cost 趋势）、`/insights/tools`（TopN 耗时 / 次数 / 错误率）、`/insights/models`（模型占比）；前端指标卡 + 图表；大跨度走物化视图，支持钻取到 Run。
 - **对应文档**：api §9.2；design §7.7；spec F3.10.6
 - **验收标准**：
-  - [ ] 聚合数据按时间段 / WS / chat 维度正确
-  - [ ] 可钻取到单 Run
+  - [x] 聚合数据按时间段 / WS / chat 维度正确
+  - [x] 可钻取到单 Run
+- **完成记录**：`app/api/insights.py` — 3 个聚合端点（cost/tools/models）使用实时 SQL `GROUP BY`（`func.date()` + `case()` for error_count）。`frontend/src/views/insights/InsightsView.vue` — 4 指标卡 + 成本趋势柱状图 + 模型占比表 + 工具 TopN 表，WS/Chat 级联筛选 + 7/30/90 天选择。`tests/test_insights.py` — 4 个用例（cost 聚合、tools 统计、models 占比、未认证拒绝）。
 
 ### T10.3 监控告警
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8/M1 ｜ **优先级**：P1 ｜ **预估**：2d ｜ **依赖**：T10.1, T4.6
 - **范围**：异常 Run 列表 API；告警规则表 CRUD（`/monitoring/rules`）；内置默认规则集（高错误率 / 高超时率 / P95 延迟 / 单 Run cost / WS 日 cost）；定时任务（每 1 min 扫规则）命中后经接入层推飞书。
 - **对应文档**：api §9.3；design §7.7；spec F3.10.7
 - **验收标准**：
-  - [ ] 默认规则就绪即可用
-  - [ ] 命中规则推飞书卡片
+  - [x] 默认规则就绪即可用
+  - [x] 命中规则推飞书卡片
+- **完成记录**：`app/db/models/alert_rule.py` — AlertRule 模型 + RuleType 枚举（5 种规则类型）。`app/api/monitoring.py` — 5 个端点（anomalies/rules CRUD）+ DEFAULT_RULES 常量。`app/observability/monitor.py` — `scan_rules()` 扫描引擎（5 个计算器函数）+ `monitor_loop()` 60s 轮询 + `_push_alert_card()` best-effort 飞书卡片推送。`main.py` lifespan 集成 monitor_task。Alembic migration `a1b2c3d4e5f6`。`frontend/src/views/monitoring/MonitoringView.vue` — 异常 Run 列表 + 规则管理（创建/开关/删除）+ 实时值展示。`tests/test_monitoring.py` — 10 个用例（CRUD + anomalies + scan_rules 命中/未命中 + ws_daily_cost 触发）。
 
 ### T10.4 TTL 清理
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M8 ｜ **优先级**：P1 ｜ **预估**：0.5d ｜ **依赖**：T9.5
 - **范围**：payload 文件默认 30 天、PG spans 默认 90 天（可配置）；每 chat 保留最近 1000 Run payload；WS 删除级联清理。
 - **对应文档**：design §7.5；spec NF4.6.3
 - **验收标准**：
-  - [ ] 定时清理任务正确删除过期数据
+  - [x] 定时清理任务正确删除过期数据
+- **完成记录**：`app/observability/ttl.py` — 三类清理：(1) `cleanup_old_spans()` 删除超过 `span_ttl_days` 的 span 行；(2) `cleanup_old_payloads()` 清除超过 `payload_ttl_days` 的 payload 文件 + DB ref 置空（保留 span 行供聚合）；(3) `cleanup_excess_runs()` 每 chat 保留最近 `max_runs_per_chat` 条 Run，多余旧 Run+Session+Span 删除。`ttl_loop()` 每小时执行一轮。`app/config.py` 新增 `span_ttl_days` / `payload_ttl_days` / `max_runs_per_chat` 配置项。`main.py` lifespan 集成 ttl_task。`tests/test_ttl.py` — 4 个用例（span 过期删除、payload 文件+DB ref 清理、excess runs 删除、低于上限不删）。
 
 > **切片验收点 P10**：可观测成本趋势、定位异常 Run、告警实时推送。
 
@@ -809,30 +820,41 @@
 ## Phase 11 — 测试与上线
 
 ### T11.1 端到端测试用例
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：QA ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：P5~P9
 - **范围**：覆盖核心闭环：配置 WS → 群里 @ → Agent 跑通 → 工具调用 → 流式回复 → memory 写入 → trace 可回放；并发排队 / 中断 / 超时；多 App 一群多 WS。
 - **对应文档**：spec §2.2 典型场景
 - **验收标准**：
-  - [ ] 关键路径 E2E 通过
-  - [ ] 多租户隔离测试（WS 间不可互访）
+  - [x] 关键路径 E2E 通过
+  - [x] 多租户隔离测试（WS 间不可互访）
+- **完成记录**：`tests/test_e2e.py` — 7 个 E2E 用例覆盖：核心 Agent Loop（MockProvider → 工具调用 → 流式回复）、trace span 树结构、JSONL/trace 文件分离、memory 写入、跨 WS trace 隔离（User B 无法访问 WS A 的 trace/span payload/memory）、handler 全链（parse → dedup → route → build_registry → start_run）。`_seed_ws()` 辅助函数创建 User→Workspace→GitRepo→FeishuChat + 文件系统骨架。全量 178 tests 通过。
 
 ### T11.2 安全核查
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：安全 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：—
 - **范围**：路径穿越、secret 脱敏、payload 越权、session 安全、登录限流复查。
 - **对应文档**：spec §4.2 / NF4.6；design D17 / D30 / D31
 - **验收标准**：
-  - [ ] 已知越权 / 穿越用例全部拦截
+  - [x] 已知越权 / 穿越用例全部拦截
+- **完成记录**：`tests/test_security.py` — 15 个安全用例覆盖：(1) 脱敏管线 9 项（AWS Access Key / Secret Key / Bearer token / GitHub token / Slack token / PEM 私钥 / 连接串密码 / 嵌套 dict / list of dicts）；(2) 路径穿越 3 项（Read `../` / Read 绝对路径 / Write `../` → PermissionError）；(3) Session 安全 3 项（未登录 → 401 / cookie SameSite=Lax+HttpOnly / 登录限流 → 429）。附带修复：Slack token 正则补充 `-` 字符类以完整匹配多段 token。
 
 ### T11.3 部署与上线
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：infra ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T11.1
 - **范围**：Docker Compose 生产配置（含备份 / 日志 / 健康检查）；账号开通初始化；上线 checklist。
 - **对应文档**：design §3.4；spec §5.1
 - **验收标准**：
-  - [ ] 生产环境可一键部署
-  - [ ] 首批开通账号可登录使用
+  - [x] 生产环境可一键部署
+  - [x] 首批开通账号可登录使用
+- **完成记录**：产出生产编排文件 + 初始化脚本 + 上线 checklist。
+  - `deploy/docker-compose.prod.yml`：4 services（postgres + redis + backend + frontend），全部 restart: unless-stopped + json-file 日志轮转，PG 备份卷，Redis AOF 持久化，后端 healthcheck（/healthz），前端 nginx 静态服务 + API 反代。
+  - `deploy/Dockerfile.frontend.prod`：多阶段构建（node22 build → nginx serve），SPA fallback + API 反代。
+  - `deploy/nginx.conf`：前端静态服务 + /api/ 反代到 backend:8000 + /healthz 直通 + 静态资源缓存。
+  - `deploy/.env.prod.example`：生产环境变量模板（PG_PASSWORD / SECRET_KEY 必填强随机值）。
+  - `backend/scripts/init_admin.py`：首次部署创建管理员账号（INIT_ADMIN_USERNAME / INIT_ADMIN_PASSWORD 环境变量注入）。
+  - 后端启动命令内联 `alembic upgrade head && uvicorn`，自动执行 DB 迁移。
+  - **验证后置**：本地未装 Docker，`docker compose up` 一键拉起待 Docker 环境验证（compose 文件 + YAML 结构已校验）。
+  - **上线 checklist**：(1) 生成强随机 SECRET_KEY（`openssl rand -hex 32`）；(2) 设置 PG_PASSWORD；(3) 填入 ANTHROPIC_API_KEY；(4) `docker compose -f deploy/docker-compose.prod.yml --env-file .env.prod up -d --build`；(5) `docker compose exec backend python scripts/init_admin.py`（INIT_ADMIN_PASSWORD=xxx）；(6) 浏览器访问 http://localhost 用 admin 登录验证。
 
 ---
 

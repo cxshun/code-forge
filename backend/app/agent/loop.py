@@ -5,6 +5,10 @@ F3.4.6）→ 反馈 tool_result → 直到最终回复（无 tool_use）。
 
 兜底：最大 tool_use 轮数（F3.3.11，默认 50）、中止事件（T6.3 中断）。
 Loop 不感知飞书——text_delta / tool 调用通过回调交给接入层推卡片，保持解耦。
+
+埋点（§7.3 / T9.4）：每轮 LLM 调用 → llm span（含 stream token 聚合）；
+每次工具调用 → tool span / skill span。trace context 由 ``run.py:_execute_run``
+在 Run 启动时 ``init_trace`` 初始化。
 """
 
 import asyncio
@@ -13,6 +17,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from app.agent.context import ContextManager
+from app.db.models.span import SpanType
+from app.observability.cost import calc_cost_usd
+from app.observability.tracer import span
 from app.providers.base import Message, Provider, Usage
 from app.tools.base import ToolContext
 from app.tools.registry import ToolRegistry
@@ -53,32 +60,55 @@ async def _stream_round(
     on_text: OnText | None,
     on_usage: OnUsage | None,
 ) -> tuple[Message, list[dict], Usage]:
-    """流式调一轮 LLM，返回 (assistant_msg, tool_calls, usage)。"""
+    """流式调一轮 LLM，返回 (assistant_msg, tool_calls, usage)。
+
+    埋点：包裹 ``span("llm")``，聚合 stream token（§7.3 streaming 聚合）。
+    """
     assistant = Message(role="assistant", content="")
     tool_calls: list[dict] = []
     usage = Usage()
 
-    async for evt in provider.stream(
-        messages=ctx.messages,
-        tools=tools_defs or None,
-        system=ctx.system,
-    ):
-        if evt.type == "text" and evt.text:
-            assistant.content = (assistant.content or "") + evt.text
-            await _maybe_call(on_text, evt.text)
-        elif evt.type == "tool_use_start" and evt.tool_name:
-            tool_calls.append(
-                {
-                    "id": "",
-                    "name": evt.tool_name,
-                    "input": evt.tool_input or "{}",
-                }
-            )
-        elif evt.type == "stop":
-            if evt.input_tokens is not None:
-                usage.input_tokens = evt.input_tokens
-            if evt.output_tokens is not None:
-                usage.output_tokens = evt.output_tokens
+    async with span(SpanType.llm.value) as sctx:
+        sctx.provider = provider.name
+        sctx.model = provider.model
+        async for evt in provider.stream(
+            messages=ctx.messages,
+            tools=tools_defs or None,
+            system=ctx.system,
+        ):
+            if evt.type == "text" and evt.text:
+                assistant.content = (assistant.content or "") + evt.text
+                await _maybe_call(on_text, evt.text)
+            elif evt.type == "tool_use_start" and evt.tool_name:
+                tool_calls.append(
+                    {
+                        "id": "",
+                        "name": evt.tool_name,
+                        "input": evt.tool_input or "{}",
+                    }
+                )
+            elif evt.type == "stop":
+                if evt.input_tokens is not None:
+                    usage.input_tokens = evt.input_tokens
+                    sctx.input_tokens = evt.input_tokens
+                if evt.output_tokens is not None:
+                    usage.output_tokens = evt.output_tokens
+                    sctx.output_tokens = evt.output_tokens
+                if evt.cache_read_input_tokens is not None:
+                    usage.cache_read_input_tokens = evt.cache_read_input_tokens
+                    sctx.cache_read_input_tokens = evt.cache_read_input_tokens
+                if evt.cache_creation_input_tokens is not None:
+                    usage.cache_creation_input_tokens = evt.cache_creation_input_tokens
+                    sctx.cache_creation_input_tokens = evt.cache_creation_input_tokens
+
+        sctx.stop_reason = "end_turn" if not tool_calls else "tool_use"
+        sctx.cost_usd = calc_cost_usd(
+            sctx.model,
+            sctx.input_tokens,
+            sctx.output_tokens,
+            sctx.cache_read_input_tokens,
+            sctx.cache_creation_input_tokens,
+        )
 
     await _maybe_call(on_usage, usage)
     return assistant, tool_calls, usage
@@ -101,7 +131,15 @@ async def _execute_tools(
         if ctx.abort.is_set():
             raise InterruptedError("interrupted during tool execution")
         await _maybe_call(on_tool_call, tc)
-        content = await registry.execute(tc["name"], tc.get("input", "{}"), ctx.tool_ctx)
+        tool_name = tc["name"]
+        is_skill = tool_name.startswith("skill__")
+        span_type = SpanType.skill.value if is_skill else SpanType.tool.value
+        async with span(span_type, tool_name=tool_name) as sctx:
+            sctx.tool_input_summary = str(tc.get("input", ""))[:2000]
+            content = await registry.execute(tc["name"], tc.get("input", "{}"), ctx.tool_ctx)
+            sctx.tool_output_summary = content[:2000] if content else None
+            if content and content.startswith("Error: path rejected"):
+                sctx.tool_path_rejected = True
         return Message(role="tool_result", tool_call_id=tc.get("id", ""), content=content)
 
     # 分类：只读 vs 写

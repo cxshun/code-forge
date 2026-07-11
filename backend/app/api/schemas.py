@@ -206,3 +206,54 @@ class RunOut(BaseModel):
     status: str
     trigger_message_id: str | None = None
     error: str | None = None
+
+
+class SpanOut(BaseModel):
+    span_id: str
+    trace_id: str
+    parent_span_id: str | None = None
+    span_order: int
+    span_type: str
+    status: str
+    workspace_id: int
+    feishu_chat_id: int
+    session_id: int
+    run_id: int
+    provider: str | None = None
+    model: str | None = None
+    stop_reason: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    tool_name: str | None = None
+    tool_input_summary: str | None = None
+    tool_output_summary: str | None = None
+    tool_acquired_lock: bool | None = None
+    tool_path_rejected: bool | None = None
+    cost_usd: float | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    payload_ref: str | None = None
+    payload_size_bytes: int | None = None
+    payload_truncated: bool = False
+    attributes: dict | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    duration_ms: int | None = None
+
+
+class TraceListItem(BaseModel):
+    run_id: int
+    trace_id: str
+    root_span_id: str
+    span_type: str
+    status: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    duration_ms: int | None = None
+    total_input_tokens: int | None = None
+    total_output_tokens: int | None = None
+    total_cost_usd: float | None = None
+    span_count: int = 0
+    error_type: str | None = None

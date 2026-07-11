@@ -10,7 +10,8 @@ from app.db.session import async_session_factory
 
 TRUNCATE_ALL = (
     "TRUNCATE TABLE users, workspaces, feishu_chats, git_repos, skills, mcps, "
-    "workspace_skill, workspace_mcp, sessions, runs, spans, tasks, feishu_apps "
+    "workspace_skill, workspace_mcp, sessions, runs, spans, tasks, feishu_apps, "
+    "alert_rules "
     "RESTART IDENTITY CASCADE"
 )
 

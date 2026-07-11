@@ -1,0 +1,111 @@
+# Code Forge 生产环境编排（design §3.4 / T11.3）。
+#
+# 用法：
+#   1. cp deploy/.env.prod.example .env.prod && 编辑注入强随机值
+#   2. docker compose -f deploy/docker-compose.prod.yml --env-file .env.prod up -d --build
+#   3. 首次部署后创建管理员：docker compose -f deploy/docker-compose.prod.yml exec backend python scripts/init_admin.py
+#
+# 与 docker-compose.yml（本地开发）的区别：
+# - 无源码挂载，镜像内打包
+# - 前端 nginx 静态服务 + 反代（非 vite dev）
+# - 后端 entrypoint 先 alembic upgrade 再 uvicorn
+# - 全部 restart: unless-stopped + 日志 json-file 轮转
+# - PG 备份卷 + Redis AOF 持久化
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${PG_USER:-codeforge}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD required}
+      POSTGRES_DB: ${PG_DB:-codeforge}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - pg_backup:/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-codeforge} -d ${PG_DB:-codeforge}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../deploy/Dockerfile.backend
+    command: sh -c "uv run alembic upgrade head && exec uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      APP_ENV: prod
+      PG_DSN: postgresql+asyncpg://${PG_USER:-codeforge}:${PG_PASSWORD}@postgres:5432/${PG_DB:-codeforge}
+      REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      FEISHU_BASE_URL: https://open.feishu.cn/open-apis
+    env_file:
+      - ../.env.prod
+    volumes:
+      - app_data:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend.prod
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pg_data:
+  pg_backup:
+  redis_data:
+  app_data:

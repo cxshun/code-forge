@@ -1,10 +1,11 @@
 """Run 启动期工厂：按 WS 构建 Provider / 工具注册表 / cwd / 引用块（design §6.1 / §6.5）。
 
 接入层（飞书 handler）路由到 (ws_id, feishu_chat_id) 后，用本模块组装 Run 所需依赖，
-再经 ``RunQueue.submit`` 入队。所有工厂按 WS 实际挂载情况构造（内置工具 + 挂载 Skill）。
+再经 ``RunQueue.submit`` 入队。所有工厂按 WS 实际挂载情况构造（内置工具 + 挂载 Skill + 挂载 MCP）。
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,10 +21,13 @@ from app.tools.builtin.glob import GlobTool
 from app.tools.builtin.grep import GrepTool
 from app.tools.builtin.read import ReadTool
 from app.tools.builtin.write import WriteTool
+from app.tools.mcp import build_mcp_tools
 from app.tools.registry import ToolRegistry
 from app.tools.skill import build_skill_tools
 
 log = logging.getLogger("agent.runtime")
+
+McpCleanup = Callable[[], Awaitable[None]] | None
 
 
 def make_provider() -> Provider:
@@ -31,11 +35,14 @@ def make_provider() -> Provider:
     return AnthropicProvider()
 
 
-async def build_registry(db: AsyncSession, ws_id: int) -> tuple[ToolRegistry, list[str]]:
-    """WS 工具注册表 = 内置 6 工具 + 挂载 Skill 的 skill__{name} 工具。
+async def build_registry(
+    db: AsyncSession, ws_id: int
+) -> tuple[ToolRegistry, list[str], McpCleanup]:
+    """WS 工具注册表 = 内置 6 工具 + 挂载 Skill 的 skill__{name} 工具 + 挂载 MCP 工具。
 
-    返回 (registry, skill_descriptions)：descriptions 用于 system prompt 的「可用
-    Skills」段（D16 阶段 1 元信息注入，与工具 defs 分离）。
+    返回 (registry, skill_descriptions, mcp_cleanup)：
+    - descriptions 用于 system prompt 的「可用 Skills」段（D16 阶段 1 元信息注入）
+    - mcp_cleanup 在 Run 结束后调用，关闭 MCP 客户端连接（无 MCP 时为 None）
     """
     registry = ToolRegistry()
     for tool in (ReadTool(), GlobTool(), GrepTool(), WriteTool(), EditTool(), BashTool()):
@@ -44,7 +51,16 @@ async def build_registry(db: AsyncSession, ws_id: int) -> tuple[ToolRegistry, li
     for skill_tool in await build_skill_tools(db, ws_id):
         registry.register(skill_tool)
         skill_descriptions.append(f"{skill_tool.name}: {skill_tool.description}")
-    return registry, skill_descriptions
+
+    mcp_tools, mcp_clients = await build_mcp_tools(db, ws_id)
+    for tool in mcp_tools:
+        registry.register(tool)
+
+    async def _mcp_cleanup() -> None:
+        for c in mcp_clients:
+            await c.close()
+
+    return registry, skill_descriptions, (_mcp_cleanup if mcp_clients else None)
 
 
 async def resolve_cwd(db: AsyncSession, ws: Workspace) -> str:

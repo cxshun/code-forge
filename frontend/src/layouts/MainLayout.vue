@@ -18,6 +18,9 @@ const menuItems = computed(() => {
     { index: '/feishu-apps', label: '飞书 App', icon: 'ChatDotRound' },
     { index: '/memory', label: 'Memory 管理', icon: 'Notebook' },
     { index: '/sessions', label: '会话历史', icon: 'Clock' },
+    { index: '/traces', label: 'Trace 观测', icon: 'DataLine' },
+    { index: '/insights', label: 'Insights', icon: 'TrendCharts' },
+    { index: '/monitoring', label: '监控告警', icon: 'Warning' },
   ]
   if (isAdmin.value) {
     items.push({ index: '/users', label: '用户管理', icon: 'User' })

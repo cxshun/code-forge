@@ -63,6 +63,8 @@ class Provider(ABC):
 
     实现需提供：
     - ``context_window``：模型上下文窗口大小（token）
+    - ``model``：模型标识（用于 cost 计算与 insights 聚合）
+    - ``name``：Provider 名称（anthropic / glm / mock）
     - ``chat``：非流式接口，返回 messages + usage
     - ``stream``：流式接口，生产 StreamEvent
     - ``count_tokens``：消息 token 计数，供 clearing / compaction 层决策
@@ -72,6 +74,18 @@ class Provider(ABC):
     @abstractmethod
     def context_window(self) -> int:
         """模型上下文窗口（token）。Claude 200K / GLM 128K 等。"""
+        ...
+
+    @property
+    @abstractmethod
+    def model(self) -> str:
+        """模型标识（如 claude-sonnet-4-20250514），用于 cost 计算。"""
+        ...
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Provider 名称（anthropic / glm / mock）。"""
         ...
 
     @abstractmethod
