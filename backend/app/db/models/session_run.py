@@ -2,7 +2,8 @@
 
 - Session：上下文单元，会话历史落 JSONL（chats/{feishu_chat_id}/sessions/{id}.jsonl）。
 - Run：一次 Agent Loop 实例，1:1 绑定 Session。status 状态机见 §6.6：
-  queued → running → completed / error / interrupted / timeout。
+  queued → running → completed / error / interrupted / timeout；
+  queued → cancelled（排队中被用户取消，未启动 Agent Loop）。
 """
 
 import enum
@@ -21,6 +22,7 @@ class RunStatus(enum.StrEnum):
     error = "error"
     interrupted = "interrupted"
     timeout = "timeout"
+    cancelled = "cancelled"
 
 
 class Session(Base, TimestampMixin):

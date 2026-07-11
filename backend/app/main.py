@@ -18,10 +18,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import __version__
 from app.api.agent_md import router as agent_md_router
 from app.api.auth import router as auth_router
+from app.api.chats import router as chats_router
 from app.api.feishu_apps import router as feishu_apps_router
 from app.api.health import router as health_router
 from app.api.mcps import router as mcps_router
+from app.api.memory import router as memory_router
+from app.api.mounts import router as mounts_router
 from app.api.repos import router as repos_router
+from app.api.runs import router as runs_router
 from app.api.skills import router as skills_router
 from app.api.tasks import router as tasks_router
 from app.api.users import router as users_router
@@ -66,6 +70,10 @@ app.include_router(mcps_router, prefix="/api/admin")
 app.include_router(feishu_apps_router, prefix="/api/admin")
 app.include_router(agent_md_router, prefix="/api/admin")
 app.include_router(repos_router, prefix="/api/admin")
+app.include_router(runs_router, prefix="/api/admin")
+app.include_router(memory_router, prefix="/api/admin")
+app.include_router(chats_router, prefix="/api/admin")
+app.include_router(mounts_router, prefix="/api/admin")
 app.include_router(skills_router, prefix="/api/admin")
 
 

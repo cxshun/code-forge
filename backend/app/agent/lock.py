@@ -16,6 +16,7 @@ from redis.asyncio import Redis
 log = logging.getLogger("agent.lock")
 
 LOCK_PREFIX = "ws_lock:"
+LOCK_NOTIFY_PREFIX = "ws_lock_notify:"  # 锁释放通知频道（§6.6 pub/sub，唤醒排队 Run）
 LOCK_TTL_S = 30
 LOCK_HEARTBEAT_S = 10  # ≈ TTL/3
 
@@ -93,6 +94,8 @@ class WsLock:
         if self._acquired:
             await self._redis.eval(_RELEASE_SCRIPT, 1, self._key, self._holder)
             self._acquired = False
+            # 通知排队中的 Run（§6.6：pub/sub 唤醒，避免空轮询）
+            await self._redis.publish(f"{LOCK_NOTIFY_PREFIX}{self._ws_id}", "released")
             log.info("lock released ws=%s", self._ws_id)
 
     async def __aenter__(self) -> "WsLock":

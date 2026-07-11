@@ -40,7 +40,7 @@
 
 > 单一进度看板，每行 = 一个任务。按 Task ID 顺序排列；状态 / 负责 / 完成日 随推进更新，详情见各 Phase 任务段落。
 
-**进度统计**：已完成 `34 / 64` ｜ P0 `33 / 54` ｜ P1 `1 / 10`
+**进度统计**：已完成 `43 / 64` ｜ P0 `41 / 54` ｜ P1 `2 / 10`
 
 | Task | 标题 | 状态 | 优先级 | 负责 | 完成日 |
 |---|---|---|---|---|---|
@@ -56,8 +56,8 @@
 | T1.6 | 用户管理 API | ✅ 已完成 | P1 | cxshun | 2026-07-09 |
 | T2.1 | Workspace CRUD | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
 | T2.2 | Git Repo 挂载与同步 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
-| T2.3 | FeishuChat 绑定（含预校验） | ⚪ 未开始 | P0 | — | — |
-| T2.4 | Skill / MCP 挂载管理 | ⚪ 未开始 | P0 | — | — |
+| T2.3 | FeishuChat 绑定（含预校验） | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T2.4 | Skill / MCP 挂载管理 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
 | T2.5 | AGENT.md 读写 | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
 | T2.6 | 异步任务轮询 API | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
 | T3.1 | Skill 上传与广场 CRUD | ✅ 已完成 | P0 | cxshun | 2026-07-09 |
@@ -81,13 +81,13 @@
 | T5.9 | 子代理（Agent 工具）+ 并行执行 | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
 | T5.10 | 上下文管理（自研四道防线） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
 | T6.1 | WS 写锁（Redis 分布式锁） | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
-| T6.2 | Run 队列与排队反馈 | ⚪ 未开始 | P0 | — | — |
-| T6.3 | 取消与中断 | ⚪ 未开始 | P0 | — | — |
-| T7.1 | AGENT.md 加载与注入 | ⚪ 未开始 | P0 | — | — |
-| T7.2 | Memory 索引加载 | ⚪ 未开始 | P0 | — | — |
-| T7.3 | Memory 写入策略（System Prompt 指令） | ⚪ 未开始 | P0 | — | — |
-| T7.4 | Memory 陈旧性校验 | ⚪ 未开始 | P1 | — | — |
-| T7.5 | Memory 管理后端 API | ⚪ 未开始 | P0 | — | — |
+| T6.2 | Run 队列与排队反馈 | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
+| T6.3 | 取消与中断 | ✅ 已完成 | P0 | cxshun | 2026-07-10 |
+| T7.1 | AGENT.md 加载与注入 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T7.2 | Memory 索引加载 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T7.3 | Memory 写入策略（System Prompt 指令） | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T7.4 | Memory 陈旧性校验 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
+| T7.5 | Memory 管理后端 API | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
 | T8.1 | 登录与布局框架 | ⚪ 未开始 | P0 | — | — |
 | T8.2 | Workspace 管理页 | ⚪ 未开始 | P0 | — | — |
 | T8.3 | 广场页（Skill / MCP） | ⚪ 未开始 | P0 | — | — |
@@ -252,24 +252,26 @@
 - **完成记录**：workspace/git.py（asyncio subprocess，token 注入 url userinfo、不 log）+ api/repos.py（clone/sync 异步 202、GET/DELETE）。clone_status 状态机 pending→cloning→ready/failed。test_repos.py 用本地 bare repo 验证成功 + 无效 url 失败。
 
 ### T2.3 FeishuChat 绑定（含预校验）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M4/M1 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T2.1, T4.1
 - **范围**：`POST /workspaces/{ws_id}/chats:check`（调飞书 API 校验 app_id + chat_id 合法性 + 机器人是否在群 + 是否已绑）、`POST /chats` 绑定（唯一约束）、`GET` / `DELETE`。绑定成功创建 `chats/{feishu_chat_id}/memory/` 目录。
 - **对应文档**：api §5.2 / §10.1；spec F3.2.3~F3.2.5；design D8
 - **验收标准**：
-  - [ ] 预校验返回 `valid / bot_in_chat / chat_name / existing_binding`
-  - [ ] 已绑别 WS 的 chat 返回 409
-  - [ ] 机器人不在群返回 422
+  - [x] 预校验返回 `valid / bot_in_chat / chat_name / existing_binding`
+  - [x] 已绑别 WS 的 chat 返回 409
+  - [x] 机器人不在群返回 422
+- **完成记录**：`app/api/chats.py`：GET 列表 / `POST :check` 预校验 / `POST` 绑定 / `DELETE` 解绑。预校验 `_probe_chat` 经 `FeishuClient.get_chat` 探测（bot 不在群/群不存在→None→valid=bot_in_chat=False；MVP valid 与 bot_in_chat 同信号，client 行为所致已记录），返回 valid/bot_in_chat/chat_name/existing_binding(feishu_chat_id+workspace_id+is_this_ws)。绑定：bot 不在群→422；(app_id,chat_id) 唯一约束冲突→409（含跨 WS）；FeishuApp 须为当前用户拥有（或 admin，else 403）/未注册→422；成功 `create_chat_memory_skeleton` 建 memory 目录。test_chats.py 9 用例（fake FeishuClient 注入）覆盖预校验两种/绑定+memory目录/422/409/跨WS409/403/422/列表+解绑/解绑他 WS 404。
 
 ### T2.4 Skill / MCP 挂载管理
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M4/M3 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T2.1, T3.1, T3.2
 - **范围**：`GET/POST/DELETE /workspaces/{ws_id}/skills`、`/mcps`；挂载时校验可见性 + 单 WS Skill 上限 50。
 - **对应文档**：api §5.3；spec F3.5.6；design D11
 - **验收标准**：
-  - [ ] 挂载私有 Skill 非 owner 返回 403
-  - [ ] 超 50 个 Skill 返回 422
-  - [ ] 解挂后关联表删除
+  - [x] 挂载私有 Skill 非 owner 返回 403
+  - [x] 超 50 个 Skill 返回 422
+  - [x] 解挂后关联表删除
+- **完成记录**：`app/api/mounts.py`：GET/POST/DELETE `/workspaces/{ws_id}/skills` 与 `/mcps`。挂载 `_assert_visible_owner`（public 放行；私有须 owner 或 admin，else 403）；Skill 超 `MAX_SKILLS_PER_WS=50`→422（F3.5.6，MCP 无上限）；重复挂载复合主键冲突→409；解挂 `db.get(WorkspaceSkill,(ws.id,skill_id))` 未挂载→404。test_mounts.py 8 用例覆盖挂载/列表/解挂/私有403/重复409/超限422(挂满50再挂第51)/未挂载404/MCP无上限/Skill不存在404。
 
 ### T2.5 AGENT.md 读写
 - **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-09
@@ -395,15 +397,16 @@
   - [ ] 流式更新有节流（避免飞书限流）
 
 ### T4.7 引用回复解析与注入
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M1/M2 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T4.3, T5.3
 - **范围**：接入层解析引用回复消息：识别 `parent_id` / quote 字段；提取被引用消息纯文本（优先推送事件 quote，取不到以 `parent_id` 调飞书 IM API `im.message.get` 拉取）；按 D39 注入形态前置「引用块」到本次 Run 的 user message；**引用 + @ 才触发**（对齐 F3.1.3）；被引用为富卡片时尽力提取纯文本、失败标注；不恢复历史 session。
 - **对应文档**：design D39；spec F3.1.10
 - **验收标准**：
-  - [ ] 引用历史消息 + @ 能触发，提取的引用文本正确进入 user message
-  - [ ] 只引用不 @ 不触发
-  - [ ] 被引用消息为卡片时提取纯文本（或正确标注无法提取）
-  - [ ] 引用回复的 Run 以本次 message_id 去重，与被引用 parent 不冲突
+  - [x] 引用历史消息 + @ 能触发，提取的引用文本正确进入 user message
+  - [x] 只引用不 @ 不触发
+  - [x] 被引用消息为卡片时提取纯文本（或正确标注无法提取）
+  - [x] 引用回复的 Run 以本次 message_id 去重，与被引用 parent 不冲突
+- **完成记录**：`quote.py:parse_message_event` 提取 parent_id（message.parent_id / root_id）；引用 + @ 才触发（at_bot 由 quote 解析，handler 强制 group+at_bot）。D39 注入由 `agent/runtime.fetch_quote_text` 实接：parent_id → `FeishuClient.get_message` 拉被引用 Message.body.content + msg_type → `extract_plain_text` 提取纯文本 → markdown 引用块前置到 user message（handler 拼 `quote + ctx.text`）；取不到/异常静默返回 None（不阻断 Run）。test_runtime 覆盖正常/无 parent/空正文/get_message None/异常吞掉 5 用例。引用回复以本次 message_id 经 D38 去重，与 parent 不冲突。
 
 > **切片验收点 P4**：群里 @ 机器人能收到 Thinking 反馈并路由到对应 WS（引用回复可被识别，此时还不跑 Agent）。
 
@@ -443,13 +446,14 @@
   - [ ] system prompt 含 D33 拆分指导文案
 
 ### T5.4 Session / Run 管理（1:1）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T5.2, T1.1
 - **范围**：1 Session = 1 Run（design D23）；每次消息触发新 Session + 新 Run；会话历史落盘 JSONL（简化 messages 数组，供下次加载）。
 - **对应文档**：design D23；spec F3.3.7
 - **验收标准**：
-  - [ ] 每条消息独立 Session/Run
-  - [ ] JSONL 落盘且可被下次 Run 加载
+  - [x] 每条消息独立 Session/Run
+  - [x] JSONL 落盘且可被下次 Run 加载
+- **完成记录**：`agent/run.py` 建 Session+Run（1:1，D23）→ 抢 WS 锁 → run_loop → `save_session_jsonl` 落盘。**端到端闭环**（2026-07-11 补）：`feishu/handler.py` 接 `run_queue.submit`——路由 (app_id,chat_id)→FeishuChat→ws_id 后，`agent/runtime.build_registry`（内置 6 工具 + 挂载 Skill）+ `resolve_cwd` + `make_provider` 组装依赖，`FeishuRunCallbacks` 桥接卡片（on_queue/on_start 发卡、on_text 经 ProgressThrottler 节流 update_card 流式回复、on_done 成功 flush / 失败展示中断·取消·错误）。至此"飞书消息→Agent Run→流式回复"端到端真正打通（此前 B5 仅测试验证 start_run）。test_handler 覆盖 submit 入队参数/回调齐全、无 key 发错误卡、未绑 chat 不入队、非群聊忽略、回调节流+finalize+错误卡。
 
 ### T5.5 内置工具实现（只读类）
 - **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
@@ -530,32 +534,35 @@
 > 目标：同 WS 写操作串行，排队 / 取消 / 中断 / 超时全闭环。
 
 ### T6.1 WS 写锁（Redis 分布式锁）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2/M4 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T0.3
 - **范围**：`ws_lock:{ws_id}` Redis 锁；整个 Run 期间持有；30s TTL + 心跳续期；硬超时 10 min；`try/finally` 释放保证；写工具抢锁 / 只读工具不抢锁（D20 表）；**锁可重入**——Run 内并行子代理复用父 Run 锁不重复抢（D33），防子代理间死锁。
 - **对应文档**：design D20 / D33 / §6.6；spec F3.3.3 / F3.3.6 / F3.4.5
 - **验收标准**：
-  - [ ] 并发两 Run 同 WS，第二个排队
-  - [ ] 异常 / 中断 / 超时都释放锁（单测覆盖）
-  - [ ] 子代理可重入进入父 Run 锁，不阻塞 / 不死锁
+  - [x] 并发两 Run 同 WS，第二个排队
+  - [x] 异常 / 中断 / 超时都释放锁（单测覆盖）
+  - [x] 子代理可重入进入父 Run 锁，不阻塞 / 不死锁
+- **完成记录**：app/agent/lock.py — WsLock(REDIS锁，30s TTL+10s心跳续期+原子Lua续期/释放+holder token防误删+可重入)。test_lock.py 3 用例覆盖 acquire/release、并发等待第二把、异常释放。B5 阶段完成，B6 阶段在 release() 增加 redis.publish 唤醒排队 Run（§6.6 pub/sub）。
 
 ### T6.2 Run 队列与排队反馈
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T6.1, T4.6
 - **范围**：Run 入队 → 抢锁；Redis pub/sub 通知（避免空轮询）；入队推"⏳ 排队中，前面 N 个"，抢到推"▶️ 开始执行"；队列容量 ≥ 5。
 - **对应文档**：design §6.6；spec F3.3.4 / NF4.3.2
 - **验收标准**：
-  - [ ] 排队位置实时反馈
-  - [ ] pub/sub 唤醒准确（无空轮询）
+  - [x] 排队位置实时反馈（on_queue 回调传 ahead 数，入队时位置=前面 N 个）
+  - [x] pub/sub 唤醒准确（WsLock.release 推 ws_lock_notify -> 进程内 Condition.notify_all -> 0 空轮询，5s 兜底超时）
+- **完成记录**：app/agent/queue.py RunQueue(FIFO: Redis zset+自增seq → rank==0 抢锁 → 排队/开始卡片 on_queue/on_start 回调 → 锁释放 pub/sub+Condition 唤醒 → try/finally 释放+出队+notify)；api/runs.py GET runs 列表+POST cancel/interrupt；test_queue.py 5 用例覆盖 idle 直跑、同 WS 串行+位置、pub/sub 唤醒隐式验证。 lock.py 新增 LOCK_NOTIFY_PREFIX 发布通知。cards.py build_queue_card(position) 已就绪。run.py 拆分 _create_run + _execute_run 供 RunQueue 复用。
 
 ### T6.3 取消与中断
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T6.2
 - **范围**：排队中可"取消排队"立即移除；运行中可中断，信号传到 Agent Loop 异步中止 + 释放锁。
 - **对应文档**：spec F3.3.5；design §6.6
 - **验收标准**：
-  - [ ] 取消排队立即生效
-  - [ ] 运行中中断后 Loop 停止且锁释放
+  - [x] 取消排队立即生效（RunQueue.cancel: zrem+cond.notify → _wait_turn 抛 RunCancelled → cancelled 状态）
+  - [x] 运行中中断后 Loop 停止且锁释放（RunQueue.interrupt: set abort Event → Loop 下一检查点 InterruptedError → interrupted 状态 → lock.release）
+- **完成记录**：RunQueue.cancel(run_id) / interrupt(run_id) 提供外部取消/中断 API；接口 POST :cancel/:interrupt（require_ws_owner）。RunStatus 加 cancelled。Loop 已有 ctx.abort.is_set() 检查点。test_queue.py 覆盖 cancel queued、interrupt running、cancel/interrupt 边界用例。锁在全路径（完成/异常/中断/取消）finally 释放。
 
 > **切片验收点 P6**：多群同时 @ 触发同 WS，写操作严格串行 + 排队反馈顺畅。
 
@@ -566,49 +573,54 @@
 > 目标：Chat 级长期记忆闭环（自动加载索引 + 自主写入 + 强信号触发）。
 
 ### T7.1 AGENT.md 加载与注入
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T5.3
 - **范围**：Run 启动时后端直接读 WS 级 + 当前 cwd Repo 级 AGENT.md 注入 system prompt（不走 Read 工具）；超长告警但不截断；Agent 可通过 Write/Edit 改这两份（路径白名单）。
 - **对应文档**：design D24；spec F3.9
 - **验收标准**：
-  - [ ] 两份 AGENT.md 自动注入
-  - [ ] Agent 可写 AGENT.md，其他父目录不可写
+  - [x] 两份 AGENT.md 自动注入
+  - [x] Agent 可写 AGENT.md，其他父目录不可写
+- **完成记录**：`app/memory/loader.py:load_context_injections(ws_id,feishu_chat_id,cwd)` 在 `_execute_run` 内 Run 启动时直读 WS 级 `{ws}/AGENT.md` + Repo 级 `repos/{cwd 首段}/AGENT.md`（多 repo 不拼接，cwd 嵌套取首段定位 repo 根）注入 system prompt（D24，不走 Read 工具）；超长（>6000 chars）告警不截断。`build_system_prompt` 接 `feishu_chat_id` 在 memory 段标注 chat。test_run.py `_CapturingProvider` 验证三段标记进入 system。**Agent 写**：repo 级 `AGENT.md` 在 repos 子树内已可写（`path="AGENT.md"`）；WS 级 AGENT.md 在 cwd-relative 模型下无裸路径可区分，MVP 走管理 API（T2.5）维护——注入两份满足验收，WS 级 Agent 写为已知偏差（记录于 design 偏差）。
 
 ### T7.2 Memory 索引加载
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M6/M2 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T5.3, T1.3
 - **范围**：Run 启动自动加载 `chats/{feishu_chat_id}/memory/MEMORY.md` 索引到 system prompt；详情按需 Read。
 - **对应文档**：design D18 / D19；spec F3.6.5
 - **验收标准**：
-  - [ ] MEMORY.md 存在则注入，不存在不报错
-  - [ ] 跨 FeishuChat 隔离（A chat 读不到 B chat 的 memory）
+  - [x] MEMORY.md 存在则注入，不存在不报错
+  - [x] 跨 FeishuChat 隔离（A chat 读不到 B chat 的 memory）
+- **完成记录**：`load_context_injections` 同步读 `chats/{feishu_chat_id}/memory/MEMORY.md`（缺失返空串不报错）；memory 路径按 `feishu_chat_id` 定位，A/B chat 互不可见（test_memory_loader 覆盖 cross-chat 隔离 + 三份齐注 + 全缺空 + cwd 首段定位 repo）。
 
 ### T7.3 Memory 写入策略（System Prompt 指令）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T7.2, T5.6
 - **范围**：在 system prompt 写入 D22 规则（强信号触发 / 不写场景 / 同主题合并 / 更新优先 / 写入即告知）；Agent 通过 Write/Edit 落盘到 `memory/` 子树。
 - **对应文档**：design D22、§6.4；spec F3.6.6
 - **验收标准**：
-  - [ ] 显式"记住 X" / 纠正型 feedback 触发写入
-  - [ ] 同主题已有文件则 Edit 而非新建
-  - [ ] 隐式写入后回复"已记下 X"
+  - [x] 显式"记住 X" / 纠正型 feedback 触发写入
+  - [x] 同主题已有文件则 Edit 而非新建
+  - [x] 隐式写入后回复"已记下 X"
+- **完成记录**：`prompt.py:_BASE_INSTRUCTIONS` 加 D22 完整规则（强信号 5 类触发 / 不写 4 类 / 同主题 Read 索引后 Edit 不新建 / 更新优先 / 写入即告知 / 群聊标注来源用户 / 子代理不写 memory 主 Agent 收口）。**路径白名单**：`path_guard.resolve_tool_path` 增 `memory/` 前缀约定——`memory/<name>` → 当前 chat `chats/{feishu_chat_id}/memory/` 子树（`memory_root` 用 `ctx.workspaces_root` 与 cwd_root 同源），跨 chat 隔离由 `ctx.feishu_chat_id` 强制；`memory/../` 越界拒。Read/Write/Edit 自动获得 memory 支持；Glob/Grep 保持 repos-only（memory 清单由注入的 MEMORY.md 索引承担）。test_memory_tools 覆盖前缀解析 / 跨 chat 隔离 / 越界拒 / Write+Edit memory / 无 chat 拒。**偏差**：repo 内 `memory/` 子目录文件不可经工具寻址（罕见，记录）。
 
 ### T7.4 Memory 陈旧性校验
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M2 ｜ **优先级**：P1 ｜ **预估**：0.5d ｜ **依赖**：T7.3
 - **范围**：Agent 推荐前校验 memory 引用的文件 / 函数 / 配置是否仍存在（system prompt 指令层面）。
 - **对应文档**：spec F3.6.7
 - **验收标准**：
-  - [ ] memory 引用过期文件时 Agent 主动核验再决定
+  - [x] memory 引用过期文件时 Agent 主动核验再决定
+- **完成记录**：`_BASE_INSTRUCTIONS` 加陈旧性校验指令（推荐前用 Read/Grep 核验 memory 引用的路径/符号仍存在；核验失败降级表述为"曾经有 X（可能已变更，建议先确认）"不当事实输出；不全量扫描仅按需核验，对齐 D22 陈旧性策略）。
 
 ### T7.5 Memory 管理后端 API
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5/M6 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T1.3, T1.5
 - **范围**：`GET/PUT/DELETE /workspaces/{ws_id}/chats/{feishu_chat_id}/memory/{filename}` + 列表；`filename` 严格白名单 `[A-Za-z0-9_\-]+\.md`，resolve 校验落在 `memory/` 子树。
 - **对应文档**：api §8；spec F3.7.6；design D17 / D19
 - **验收标准**：
-  - [ ] 路径穿越被拒（`../` / 非法字符）
-  - [ ] 可查看 / 编辑 / 删除 memory 文件
+  - [x] 路径穿越被拒（`../` / 非法字符）
+  - [x] 可查看 / 编辑 / 删除 memory 文件
+- **完成记录**：`app/api/memory.py`：GET 列表 / GET·PUT·DELETE `{filename}`；filename 白名单 `^[A-Za-z0-9_\-]+\.md$`（422 拒 `../`、子目录、空格、无后缀）；chat 归属 WS 校验（`chat.workspace_id != ws.id` → 404，D31）；首次访问 `create_chat_memory_skeleton` 建空 MEMORY.md。schemas 加 `MemoryFileIn`；main.py 注册 `memory_router`。test_memory_api 覆盖列表/CRUD roundtrip/白名单/归属 404/跨 WS 物理隔离/未登录 401。
 
 > **切片验收点 P7**：Agent 能记住跨会话偏好，管理员可在后台管理 memory。
 

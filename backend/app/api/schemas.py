@@ -79,6 +79,27 @@ class ChatBrief(BaseModel):
     chat_name: str | None
 
 
+class ChatCheckIn(BaseModel):
+    app_id: str = Field(min_length=1, max_length=64)
+    chat_id: str = Field(min_length=1, max_length=64)  # 飞书原始群 ID（oc_xxx）
+
+
+class ChatOut(BaseModel):
+    id: int
+    app_id: str
+    chat_id: str
+    chat_name: str | None
+    workspace_id: int
+
+
+class SkillMountIn(BaseModel):
+    skill_id: int
+
+
+class McpMountIn(BaseModel):
+    mcp_id: int
+
+
 class SkillBrief(BaseModel):
     id: int
     name: str
@@ -147,6 +168,10 @@ class AgentMdIn(BaseModel):
     content: str = ""
 
 
+class MemoryFileIn(BaseModel):
+    content: str = ""
+
+
 class RepoCreateIn(BaseModel):
     url: str = Field(min_length=1, max_length=1024)
     token: str | None = Field(default=None, max_length=512)
@@ -172,3 +197,12 @@ class SkillOut(BaseModel):
 class SkillPatchIn(BaseModel):
     description: str | None = Field(default=None, max_length=512)
     visibility: str | None = Field(default=None, pattern="^(private|public)$")
+
+
+class RunOut(BaseModel):
+    id: int
+    session_id: int
+    feishu_chat_id: int
+    status: str
+    trigger_message_id: str | None = None
+    error: str | None = None

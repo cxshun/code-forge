@@ -1,24 +1,107 @@
 """接入层消息处理（design §6.1）。
 
 收到飞书消息后：D38 去重 → (app_id, chat_id) 路由 → @机器人识别（仅群聊）→
-即时 Thinking 卡片（F3.1.5）。触发 Agent Run 属 B5，此处不涉及。
+组装 Run 依赖（Provider / 工具注册表 / cwd / 引用块 D39）→ ``RunQueue.submit`` 入队。
 
-引用回复解析（D39）：parse_message_event 已提取 parent_id；被引用正文拉取由
-client.get_message 在此完成（parent_id 存在时），注入到 user message 的逻辑在
-Agent 层（B5）实现。
+卡片生命周期由 Run 回调拥有（接入层不再预发 Thinking 卡片）：
+- ``on_queue`` → 排队卡片；``on_start`` → 思考中卡片
+- ``on_text`` → ``ProgressThrottler`` 节流更新卡片（流式回复，F3.1.4 / F3.1.9）
+- ``on_done`` → 成功 flush 最终正文 / 失败展示中断 / 取消 / 错误
 """
 
 import logging
 
+from app.agent.queue import RunCancelled, run_queue
+from app.agent.runtime import (
+    build_registry,
+    fetch_quote_text,
+    make_provider,
+    resolve_cwd,
+)
+from app.config import settings
 from app.core.redis_client import redis as redis_client
+from app.db.models import Workspace
 from app.db.session import async_session_factory
-from app.feishu.cards import build_progress_card
+from app.feishu.cards import (
+    ProgressThrottler,
+    build_progress_card,
+    build_queue_card,
+)
 from app.feishu.client import FeishuClient
 from app.feishu.dedup import acquire
 from app.feishu.quote import parse_message_event
 from app.feishu.router import resolve_feishu_chat
 
 log = logging.getLogger("feishu.handler")
+
+_CARD_TEXT_CAP = 6000  # 卡片单次展示文本上限（防超长回复触发飞书限制）
+
+
+class FeishuRunCallbacks:
+    """把 Run 事件桥接到飞书卡片（流式节流更新）。"""
+
+    def __init__(self, client: FeishuClient, chat_id: str, footer: str | None) -> None:
+        self._client = client
+        self._chat_id = chat_id
+        self._footer = footer
+        self._card_id: str | None = None
+        self._throttler = ProgressThrottler()
+        self._full: list[str] = []
+
+    async def _send(self, card: dict) -> None:
+        try:
+            self._card_id = await self._client.send_card(self._chat_id, card)
+        except Exception:
+            log.exception("send card failed")
+
+    async def _update(self, text: str) -> None:
+        if self._card_id is None:
+            return
+        try:
+            await self._client.update_card(
+                self._card_id, build_progress_card(text[:_CARD_TEXT_CAP], footer=self._footer)
+            )
+        except Exception:
+            log.exception("update card failed")
+
+    async def on_queue(self, position: int) -> None:
+        await self._send(build_queue_card(position))
+
+    async def on_start(self) -> None:
+        await self._send(build_progress_card("⏳ 思考中…", footer=self._footer))
+
+    async def on_text(self, delta: str) -> None:
+        self._full.append(delta)
+        self._throttler.append(delta)
+        if self._throttler.should_flush():
+            self._throttler.flush()
+            await self._update("".join(self._full))
+
+    async def on_tool_call(self, _tc: dict) -> None:
+        # MVP 不为单次工具调用发卡（避免刷屏）；保留钩子供后续扩展
+        pass
+
+    async def on_done(self, exc: Exception | None) -> None:
+        if exc is not None:
+            if isinstance(exc, RunCancelled):
+                msg = "⛔ 已取消"
+            elif isinstance(exc, InterruptedError):
+                msg = "⛔ 已中断"
+            else:
+                msg = f"❌ 执行失败：{exc}"[:200]
+            if self._card_id is not None:
+                await self._update(msg)
+            else:
+                await self._send(build_progress_card(msg, footer=self._footer))
+            return
+        # 成功：flush 剩余 + 最终正文
+        if self._throttler.has_pending:
+            self._throttler.flush()
+        full = "".join(self._full)
+        if full:
+            await self._update(full)
+        elif self._card_id is None:
+            await self._send(build_progress_card("✅ 完成", footer=self._footer))
 
 
 async def handle_message(
@@ -38,23 +121,54 @@ async def handle_message(
         log.info("duplicate dropped: %s", ctx.message_id)
         return
 
-    # 路由 (app_id, chat_id) → ws_id
+    # 路由 (app_id, chat_id) → FeishuChat
     async with async_session_factory() as db:
         chat = await resolve_feishu_chat(db, ctx.app_id, ctx.chat_id)
-    if chat is None:
-        log.info("unbound chat, ignore: app=%s chat=%s", ctx.app_id, ctx.chat_id)
-        return
+        if chat is None:
+            log.info("unbound chat, ignore: app=%s chat=%s", ctx.app_id, ctx.chat_id)
+            return
+        ws_id = chat.workspace_id
+        feishu_chat_id = chat.id
+        ws = await db.get(Workspace, ws_id)
+        registry, skill_descriptions = await build_registry(db, ws_id)
+        cwd = await resolve_cwd(db, ws)
 
-    log.info(
-        "routed: app=%s chat=%s -> ws_id=%s sender=%s text=%r parent=%s",
-        ctx.app_id, ctx.chat_id, chat.workspace_id, ctx.sender_open_id,
-        ctx.text[:80], ctx.parent_id,
-    )
-
-    # T4.5 即时 Thinking 反馈（收到消息 < 1s，F3.1.5）
     client = FeishuClient(app_id, app_secret)
     footer = f"sender {ctx.sender_open_id[-8:]}" if ctx.sender_open_id else None
-    try:
-        await client.send_card(ctx.chat_id, build_progress_card("⏳ 思考中…", footer=footer))
-    except Exception:
-        log.exception("thinking card failed: %s", ctx.message_id)
+
+    # 未配置 LLM key → 发错误卡，不入队
+    if not settings.anthropic_api_key:
+        log.warning("anthropic_api_key 未设置，跳过 Run: %s", ctx.message_id)
+        try:
+            await client.send_card(
+                ctx.chat_id,
+                build_progress_card("❌ 未配置 Anthropic API Key", footer=footer),
+            )
+        except Exception:
+            log.exception("error card failed")
+        return
+
+    # D39 引用回复注入（parent_id → 拉被引用正文前置为引用块）
+    quote = await fetch_quote_text(client, ctx.parent_id)
+    user_message = f"{quote}\n{ctx.text}" if quote else ctx.text
+
+    callbacks = FeishuRunCallbacks(client, ctx.chat_id, footer)
+    run_id = await run_queue.submit(
+        ws_id=ws_id,
+        feishu_chat_id=feishu_chat_id,
+        user_message=user_message,
+        provider=make_provider(),
+        registry=registry,
+        cwd=cwd,
+        skill_descriptions=skill_descriptions,
+        trigger_message_id=ctx.message_id,
+        on_text=callbacks.on_text,
+        on_tool_call=callbacks.on_tool_call,
+        on_queue=callbacks.on_queue,
+        on_start=callbacks.on_start,
+        on_done=callbacks.on_done,
+    )
+    log.info(
+        "submitted run %d: app=%s chat=%s ws=%s text=%r quote=%s",
+        run_id, ctx.app_id, ctx.chat_id, ws_id, ctx.text[:80], bool(quote),
+    )
