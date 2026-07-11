@@ -1,11 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { authApi } from '@/api/auth'
-import type { UserInfo } from '@/types/user'
+import type { UserInfo, LoginResponse } from '@/types/user'
+import type { WorkspaceBrief } from '@/types/workspace'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref<UserInfo | null>(null)
   const isAuthenticated = ref(false)
+  const initialized = ref(false)
+  const workspaces = ref<WorkspaceBrief[]>([])
 
   async function login(username: string, password: string) {
     const res = await authApi.login(username, password)
@@ -26,16 +29,20 @@ export const useUserStore = defineStore('user', () => {
     try {
       const res = await authApi.me()
       user.value = res.user
+      workspaces.value = res.workspaces
       isAuthenticated.value = true
     } catch {
       reset()
+    } finally {
+      initialized.value = true
     }
   }
 
   function reset() {
     user.value = null
     isAuthenticated.value = false
+    workspaces.value = []
   }
 
-  return { user, isAuthenticated, login, logout, fetchMe, reset }
+  return { user, isAuthenticated, initialized, workspaces, login, logout, fetchMe, reset }
 })

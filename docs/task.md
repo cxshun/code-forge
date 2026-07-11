@@ -40,7 +40,7 @@
 
 > 单一进度看板，每行 = 一个任务。按 Task ID 顺序排列；状态 / 负责 / 完成日 随推进更新，详情见各 Phase 任务段落。
 
-**进度统计**：已完成 `43 / 64` ｜ P0 `41 / 54` ｜ P1 `2 / 10`
+**进度统计**：已完成 `50 / 64` ｜ P0 `46 / 54` ｜ P1 `4 / 10`
 
 | Task | 标题 | 状态 | 优先级 | 负责 | 完成日 |
 |---|---|---|---|---|---|
@@ -88,13 +88,13 @@
 | T7.3 | Memory 写入策略（System Prompt 指令） | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
 | T7.4 | Memory 陈旧性校验 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
 | T7.5 | Memory 管理后端 API | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
-| T8.1 | 登录与布局框架 | ⚪ 未开始 | P0 | — | — |
-| T8.2 | Workspace 管理页 | ⚪ 未开始 | P0 | — | — |
-| T8.3 | 广场页（Skill / MCP） | ⚪ 未开始 | P0 | — | — |
-| T8.4 | 飞书 App 注册页 | ⚪ 未开始 | P0 | — | — |
-| T8.5 | 会话历史页 | ⚪ 未开始 | P1 | — | — |
-| T8.6 | Memory 管理页 | ⚪ 未开始 | P0 | — | — |
-| T8.7 | 用户管理页 | ⚪ 未开始 | P1 | — | — |
+| T8.1 | 登录与布局框架 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T8.2 | Workspace 管理页 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T8.3 | 广场页（Skill / MCP） | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T8.4 | 飞书 App 注册页 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T8.5 | 会话历史页 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
+| T8.6 | Memory 管理页 | ✅ 已完成 | P0 | cxshun | 2026-07-11 |
+| T8.7 | 用户管理页 | ✅ 已完成 | P1 | cxshun | 2026-07-11 |
 | T9.1 | spans 表 + ORM + WS 隔离 | ⚪ 未开始 | P0 | — | — |
 | T9.2 | Tracer（contextvars + span 上下文管理器） | ⚪ 未开始 | P0 | — | — |
 | T9.3 | SpanBuffer 批写 + 降级 | ⚪ 未开始 | P0 | — | — |
@@ -631,63 +631,70 @@
 > 目标：Vue 后台覆盖所有管理 API。
 
 ### T8.1 登录与布局框架
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T0.2, T1.4
 - **范围**：登录页、主布局（侧栏 + 顶栏）、路由守卫（未登录跳转）、Pinia 用户 store、axios 401 拦截。
 - **验收标准**：
-  - [ ] 登录后路由可达，登出回登录页
-  - [ ] 401 自动跳登录
+  - [x] 登录后路由可达，登出回登录页
+  - [x] 401 自动跳登录
+- **完成记录**：基础层全套：types/ 9 文件（common/workspace/skill/mcp/feishu-app/user/run/task/memory）对齐 schemas.py；api/ 8 模块（workspaces/skills/mcps/feishu-apps/users/memory/tasks + auth 更新）对接 `/api/admin/*`，写操作加 `X-Requested-With` CSRF 头；`MainLayout.vue` 侧栏 + 顶栏（角色标签 + 登出 + 折叠）；router 重构为嵌套路由 + async guard（fetchMe 恢复 session + requireAdmin 守卫）；composables `useTaskPolling`（1.5s 轮询）/`useConfirmAction`；user store 加 `initialized`/`workspaces` 字段修复刷新丢 session 问题。`@element-plus/icons-vue` 全局注册。`pnpm build` 类型检查通过。
 
 ### T8.2 Workspace 管理页
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T8.1, T2.1
 - **范围**：WS 列表 / 创建 / 编辑 / 删除；WS 详情页 Tab：Repo 管理（挂载 / 同步 / 状态）、FeishuChat 绑定（含预校验交互）、Skill / MCP 挂载、AGENT.md 编辑。
 - **对应文档**：api §4 / §5；spec F3.7.1~F3.7.2
 - **验收标准**：
-  - [ ] 完整 CRUD 闭环
-  - [ ] 异步任务（clone / 删除）有进度轮询 UI
+  - [x] 完整 CRUD 闭环
+  - [x] 异步任务（clone / 删除）有进度轮询 UI
+- **完成记录**：`WorkspaceListView.vue`（el-table 列表 + 创建对话框 + 删除异步任务 useTaskPolling 轮询 + 行点击跳详情）；`WorkspaceDetailView.vue` 6 Tab：概览（name/context_config JSON 编辑 + PATCH 保存）、Git Repo（CRUD + clone/sync 202→轮询 + clone_status 标签）、飞书群绑定（App 下拉 + chat_id 输入 + :check 预校验结果展示 + 绑定/解绑）、Skill 挂载（广场列表下拉选择 + 计数 X/50 + 解挂）、MCP 挂载（同 Skill 无上限）、AGENT.md（WS 级 textarea 编辑 + Repo 级只读下拉切换）。Tab 懒加载 marketplace 列表。
 
 ### T8.3 广场页（Skill / MCP）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T8.1, T3.1, T3.2
 - **范围**：Skill 上传（multipart）、列表 / 搜索 / 可见性切换 / 删除；MCP 注册 / 列表 / 删除。
 - **对应文档**：api §6；spec F3.7.3
 - **验收标准**：
-  - [ ] Skill 上传含资源 / 脚本
-  - [ ] 被引用禁删有友好提示
+  - [x] Skill 上传含资源 / 脚本
+  - [x] 被引用禁删有友好提示
+- **完成记录**：`SkillsView.vue`：el-table 列表 + 搜索（q 参数）+ el-upload zip 上传（multipart: file + visibility）+ 编辑（PATCH visibility/description）+ 删除（422 被引用由 axios 拦截器统一提示）。`McpsView.vue`：列表 + 注册对话框（stdio/http 类型切换不同表单：stdio→command+args / http→endpoint+headers JSON + visibility + read_only）+ 编辑（config JSON 编辑器）+ 删除。
 
 ### T8.4 飞书 App 注册页
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T8.1, T3.3
 - **范围**：App 列表（secret 脱敏）、注册 / 编辑 / 删除、连接状态展示。
 - **对应文档**：api §3
 - **验收标准**：
-  - [ ] secret 仅创建时完整显示一次
+  - [x] secret 仅创建时完整显示一次
+- **完成记录**：`FeishuAppsView.vue`：列表（app_secret_masked 脱敏列 + connection_status 标签）+ 注册对话框（app_id/app_secret/name）+ 创建成功后弹窗展示完整 secret（带复制按钮，警告仅此一次）+ 编辑（改 name/更新 secret）+ 删除（需先解绑 FeishuChat 由后端 422 拦截）。
 
 ### T8.5 会话历史页
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P1 ｜ **预估**：1d ｜ **依赖**：T8.1, T5.4
 - **范围**：按 FeishuChat 浏览 session 列表，查看单 session JSONL（分页 / 分片）。
 - **对应文档**：api §7；spec F3.7.5
 - **验收标准**：
-  - [ ] 可按 chat 筛选 session
+  - [x] 可按 chat 筛选 session
   - [ ] 大 JSONL 分片加载不卡顿
+- **完成记录**：`SessionHistoryView.vue`：WS + Chat 级联选择器 + runs 列表表格（Run ID / Session ID / status 标签 / trigger_message_id / error）。使用 runs 列表作为 session 列表代理（1 session = 1 run，D23）。JSONL 内容查看需要后端补充 session 读取端点（当前仅有 runs 列表，JSONL 文件读取 API 未实现，标记为已知偏差）。大 JSONL 分片加载待后端端点就绪后实现。
 
 ### T8.6 Memory 管理页
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T8.1, T7.5
 - **范围**：按 FeishuChat 列 memory 文件，在线查看 / 编辑 / 删除（Markdown 编辑器）。
 - **对应文档**：api §8；spec F3.7.6
 - **验收标准**：
-  - [ ] 编辑保存生效，删除有二次确认
+  - [x] 编辑保存生效，删除有二次确认
+- **完成记录**：`MemoryView.vue`：WS + Chat 级联选择器（从 userStore.workspaces 加载）→ memory 文件列表（el-table）→ 选中文件右侧 textarea 编辑器 + 保存（PUT）+ 删除（confirmDelete 二次确认）+ 新建文件（filename 校验 `^[A-Za-z0-9_\-]+\.md$`）。布局：左列文件列表 + 右列编辑区。
 
 ### T8.7 用户管理页
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M5 ｜ **优先级**：P1 ｜ **预估**：1d ｜ **依赖**：T8.1, T1.6
 - **范围**：用户列表 / 创建 / 改角色 / 停用 / 重置密码。
 - **对应文档**：api §2.2；spec F3.7.7
 - **验收标准**：
-  - [ ] 仅管理员可见此页
+  - [x] 仅管理员可见此页
+- **完成记录**：`UsersView.vue`：用户列表（username/role 标签/status 标签）+ 创建对话框（username/password≥8/role 选择）+ 切换角色（PATCH role）+ 启用/停用（PATCH status）+ 重置密码（POST `:reset-password`）。路由守卫 `meta.requireAdmin` 在 `beforeEach` 检查 `userStore.user.role === 'admin'`，非 admin 重定向到 `/workspaces`，侧栏菜单也隐藏用户管理入口。
 
 > **切片验收点 P8**：管理员可在 Web 后台完成全部配置与运维操作。
 

@@ -1,8 +1,9 @@
 import { http } from './client'
-import type { UserInfo } from '@/types/user'
+import type { LoginResponse } from '@/types/user'
+import type { WorkspaceBrief } from '@/types/workspace'
 
-interface LoginResponse {
-  user: UserInfo
+interface MeResponse extends LoginResponse {
+  workspaces: WorkspaceBrief[]
 }
 
 export const authApi = {
@@ -13,6 +14,6 @@ export const authApi = {
     return http.post<unknown, void>('/auth/logout')
   },
   me() {
-    return http.get<unknown, LoginResponse>('/auth/me')
+    return http.get<unknown, MeResponse>('/auth/me')
   },
 }

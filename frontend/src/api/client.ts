@@ -9,6 +9,15 @@ export const http = axios.create({
   withCredentials: true,
 })
 
+// 写操作附加 CSRF 头（api.md §1.3）
+http.interceptors.request.use((config) => {
+  const method = (config.method || 'get').toLowerCase()
+  if (['post', 'patch', 'put', 'delete'].includes(method)) {
+    config.headers['X-Requested-With'] = 'XMLHttpRequest'
+  }
+  return config
+})
+
 http.interceptors.response.use(
   (response) => response.data,
   (error) => {

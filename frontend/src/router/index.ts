@@ -12,19 +12,76 @@ const router = createRouter({
     },
     {
       path: '/',
-      name: 'home',
-      component: () => import('@/views/HomeView.vue'),
+      component: () => import('@/layouts/MainLayout.vue'),
+      redirect: '/workspaces',
+      children: [
+        {
+          path: 'workspaces',
+          name: 'workspaces',
+          component: () => import('@/views/workspaces/WorkspaceListView.vue'),
+        },
+        {
+          path: 'workspaces/:wsId',
+          name: 'workspace-detail',
+          component: () => import('@/views/workspaces/WorkspaceDetailView.vue'),
+        },
+        {
+          path: 'skills',
+          name: 'skills',
+          component: () => import('@/views/marketplace/SkillsView.vue'),
+        },
+        {
+          path: 'mcps',
+          name: 'mcps',
+          component: () => import('@/views/marketplace/McpsView.vue'),
+        },
+        {
+          path: 'feishu-apps',
+          name: 'feishu-apps',
+          component: () => import('@/views/feishu-apps/FeishuAppsView.vue'),
+        },
+        {
+          path: 'memory',
+          name: 'memory',
+          component: () => import('@/views/memory/MemoryView.vue'),
+        },
+        {
+          path: 'sessions',
+          name: 'sessions',
+          component: () => import('@/views/sessions/SessionHistoryView.vue'),
+        },
+        {
+          path: 'users',
+          name: 'users',
+          component: () => import('@/views/users/UsersView.vue'),
+          meta: { requireAdmin: true },
+        },
+      ],
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/workspaces',
     },
   ],
 })
 
-// 路由守卫：未登录访问受保护页面 → 跳登录（带 redirect 回跳）
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (to.meta.public) return true
-  const user = useUserStore()
-  if (!user.isAuthenticated) {
+
+  const store = useUserStore()
+
+  if (!store.initialized) {
+    await store.fetchMe()
+  }
+
+  if (!store.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
+
+  if (to.meta.requireAdmin && store.user?.role !== 'admin') {
+    return { name: 'workspaces' }
+  }
+
   return true
 })
 
