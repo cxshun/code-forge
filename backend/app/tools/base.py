@@ -18,6 +18,8 @@ class ToolContext:
     workspaces_root: str
     cwd: str = ""
     feishu_chat_id: int | None = None
+    # 父 Run 的 system prompt（子代理继承 WS/Repo AGENT.md + MEMORY 索引，design D33）
+    system_prompt: str = ""
     # 动态 todos（TaskList 工具用，Run 内）
     todos: list[dict] = field(default_factory=list)
 

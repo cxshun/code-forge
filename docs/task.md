@@ -341,60 +341,66 @@
 > 目标：多 App WebSocket 长连接池收发消息，路由到 WS，即时 Thinking 反馈。
 
 ### T4.1 飞书 SDK 封装与 API 客户端
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M1 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T3.3
 - **范围**：基于 `lark-oapi` 封装：tenant access token 获取与缓存、IM API（查 chat 信息 / 判断机器人是否在群 / 发消息 / 更新卡片）。
 - **对应文档**：design §3.1 / D7
 - **验收标准**：
-  - [ ] 可凭 app_id+secret 获取 tenant_access_token 并缓存刷新
-  - [ ] 可发送文本 / 卡片消息到指定 chat_id
+  - [x] 可凭 app_id+secret 获取 tenant_access_token 并缓存刷新
+  - [x] 可发送文本 / 卡片消息到指定 chat_id
+- **完成记录**：`app/feishu/client.py:FeishuClient` 异步封装（lark 同步 API 经 `asyncio.to_thread` 不阻塞 loop）；token 获取/缓存刷新由 `lark.Client.builder().app_id().app_secret().build()` 承载。IM API：`get_chat`（不存在/无权限 code 230002/99991663→None）/`is_bot_in_chat`（MVP 等同 get_chat 可达）/`send_text`/`send_card`(msg_type=interactive)/`update_card`(patch)/`get_message`（D39 引用回复拉被引用正文，失败→None）。无专属单测，逻辑层在 `tests/test_feishu_logic.py`(5)，引用封装 `fetch_quote_text` 在 `tests/test_runtime.py`。**已真机验证**：独立应用 `cli_aadafc75d2b89cdc` 消息接收→@识别→路由→卡片全链（见 T2.3/T4.5）。
 
 ### T4.2 多 App WebSocket 长连接池
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M1 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T4.1
 - **范围**：每个注册的飞书 App 启动一个独立 WebSocket 长连接（多 Client 池），共享接入层调度；连接生命周期管理（断线重连、App 增删时动态启停连接）。
 - **对应文档**：spec F3.1.1 / F3.1.6；design D7、§6.1
 - **验收标准**：
-  - [ ] 注册新 App 后自动起一条 WS 连接
-  - [ ] 删除 App 后连接关闭
-  - [ ] 断线自动重连
+  - [x] 注册新 App 后自动起一条 WS 连接
+  - [x] 删除 App 后连接关闭
+  - [x] 断线自动重连
+- **完成记录**：`app/feishu/ws_pool.py:WsPool`（模块单例 `ws_pool`）：`_clients: dict[app_id→lark.ws.Client]` + `_threads: dict[app_id→threading.Thread]`。`add_app` 幂等起一条 WS 连接（每 App 一个 daemon 线程跑阻塞 `client.start()`），`remove_app` 出池；`auto_reconnect=True` 断线重连；`start(handler)` 绑调用方业务 loop，事件回调经 `asyncio.run_coroutine_threadsafe(handler, business_loop)` 跨线程转发（保证与 DB engine/redis 同 loop，避免 asyncpg 跨 loop）。无独立单测（依赖真实 WS，集成验证为主）。**偏差**：lark ws.Client 无优雅 stop API，删除 App 先出池、连接随进程/重启清理（D36 启动恢复兜底）；常驻连接池的精确 stop 留作后续。已真机验证长连接接收 + auto_reconnect（`cli_aadafc75d2b89cdc`）。
 
 ### T4.3 群聊消息接收与 @识别
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M1 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T4.2
 - **范围**：仅群聊（私聊 MVP 不做）；识别 @ 机器人触发；解析 `(app_id, chat_id, text, sender)`。
 - **对应文档**：spec F3.1.2 / F3.1.3；design D13 / D21
 - **验收标准**：
-  - [ ] @ 机器人触发，非 @ 忽略
-  - [ ] 提取触发者信息用于回复 @
+  - [x] @ 机器人触发，非 @ 忽略
+  - [x] 提取触发者信息用于回复 @
+- **完成记录**：`app/feishu/quote.py:parse_message_event` + `extract_plain_text` 产出 `MessageContext`(chat_type/sender_open_id/text/at_bot/parent_id)；`app/feishu/dedup.py:acquire` 用 Redis `SET NX EX 600`（10 min TTL）按 message_id 去重（D38，进队列前调用，重连补推重复丢弃）。@识别双来源：`mentions` 数组 + content 内 `<at user_id="...">` 正则（`_AT_USER_RE`）；bot_open_id 已知精确匹配，未知放宽为"任何 @ 都触发"（MVP）。handler `if ctx.chat_type != "group" or not ctx.at_bot: return`（仅群聊+@，D21/F3.1.3）；只引用不 @ 不触发（D39）。`tests/test_feishu_logic.py`(5) 覆盖 @/parent 解析、纯文本去 at、只引用不触发、dedup 首次+重复、路由。
 
 ### T4.4 路由层（app_id, chat_id → ws_id）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M1 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T4.3, T2.3
 - **范围**：`(app_id, chat_id)` → `feishu_chat_id` → `ws_id` 三级查找；未绑定的 chat 忽略或提示。
 - **对应文档**：design §6.1 关键说明
 - **验收标准**：
-  - [ ] 绑定过的 chat 能命中 ws_id
-  - [ ] 未绑定 chat 不触发 Run
+  - [x] 绑定过的 chat 能命中 ws_id
+  - [x] 未绑定 chat 不触发 Run
+- **完成记录**：`app/feishu/router.py:resolve_feishu_chat(db, app_id, chat_id) → FeishuChat | None` 三级查找：飞书原始 `(app_id, chat_id)` → DB `FeishuChat`（内部主键 feishu_chat_id）→ `workspace_id`；单条 `select(FeishuChat).where(app_id==, chat_id==)` + `db.scalar()`。未绑定返回 None → handler `log.info("unbound chat, ignore")` 直接忽略不提示。`tests/test_feishu_logic.py::test_router_resolve_bound_and_unbound` + `tests/test_handler.py::test_handle_unbound_chat_no_submit` 覆盖。
 
 ### T4.5 即时 Thinking 反馈
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M1 ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：T4.1
 - **范围**：接入层收到消息后立即回复"思考中"表情 / 卡片，给用户感知确认。
 - **对应文档**：spec F3.1.5；design §6.1
 - **验收标准**：
-  - [ ] 收到消息 < 1s 内出现 Thinking 反馈
-  - [ ] 最终回复时替换 Thinking 卡片
+  - [x] 收到消息 < 1s 内出现 Thinking 反馈
+  - [x] 最终回复时替换 Thinking 卡片
+- **完成记录**：卡片生命周期由 Run 回调 `app/feishu/handler.py:FeishuRunCallbacks` 拥有：`on_queue`→排队卡、`on_start`→发"⏳ 思考中…"卡（即 <1s Thinking 反馈，入队即触发）、`on_text`→`ProgressThrottler` 节流 update、`on_done`→成功 flush 全量最终正文替换思考卡 / 失败展示中断·取消·错误卡。未配 LLM key 直接发错误卡不入队。`app/feishu/cards.py:build_progress_card`/`build_queue_card`。`tests/test_handler.py`(6) 覆盖入队参数/无 key 错误卡/未绑不入队/非群聊忽略/流式 finalize/错误卡。已真机验证消息接收→Thinking 卡→流式回复（2026-07-10）。
 
 ### T4.6 富卡片渲染器
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M1 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T4.1
 - **范围**：飞书互动卡片封装：进度卡片（流式 token 推送，阈值合并更新防限流）、Plan 确认卡片（按钮）、diff 预览卡片、TaskList 卡片、排队状态卡片。
 - **对应文档**：spec F3.1.4；design D4 / §6.1
 - **验收标准**：
-  - [ ] 各卡片类型可发送 / 增量更新
-  - [ ] Plan 确认卡片按钮回调可接收
-  - [ ] 流式更新有节流（避免飞书限流）
+  - [x] 各卡片类型可发送 / 增量更新
+  - [x] Plan 确认卡片按钮回调可接收
+  - [x] 流式更新有节流（避免飞书限流）
+- **完成记录**：`app/feishu/cards.py`：`build_progress_card`/`build_queue_card(position)`（position<=0 "▶️ 开始执行"，否则"⏳ 排队中，前面 N 个"）/`build_plan_card(plan_md, run_id)`/`build_diff_card`/`build_tasklist_card`；`ProgressThrottler`（token_threshold=200，token≈chars/4）累积达阈值才 `should_flush`，避免触发飞书卡片更新 QPS 限制（F3.1.9）。Plan 按钮 `value={"action":"plan_confirm"/"plan_cancel","run_id":run_id}`（type primary/danger）供回调处理；`_DIFF_CAP=4000` 截断；`wide_screen_mode=True, update_multi=True`。`tests/test_cards.py`(6) 覆盖 progress 结构/queue 文案/plan 按钮 run_id/diff 截断/tasklist/throttler 累积 flush。
 
 ### T4.7 引用回复解析与注入
 - **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
@@ -417,33 +423,36 @@
 > 目标：跑通"飞书消息 → Agent Loop → 工具调用 → 流式回复"端到端闭环。
 
 ### T5.1 LLM Provider 抽象层
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T0.1
 - **范围**：抽象 `Provider` 接口（chat / stream / tool_use 解析）；Claude 实现（anthropic SDK）；多模型可切换预留（design D3）。
 - **对应文档**：design D3；spec NF4.5.1
 - **验收标准**：
-  - [ ] 接口与具体厂商解耦，切换模型不改上层
-  - [ ] 流式响应可逐 chunk 回调
+  - [x] 接口与具体厂商解耦，切换模型不改上层
+  - [x] 流式响应可逐 chunk 回调
+- **完成记录**：`app/providers/base.py` 抽象 `Provider`（抽象属性 `context_window`/`model`/`name`；抽象方法 `chat`→`(messages, Usage)`/`stream`→`AsyncIterator[StreamEvent]`/`count_tokens`，D34 用）；数据类 `Message`/`ToolDef`/`StreamEvent`/`Usage`。`anthropic_provider.py:AnthropicProvider`（`anthropic.AsyncAnthropic` + `messages.stream`，默认 model `claude-sonnet-5-20250710`，`_ctx_window=200_000`，`max_tokens=4096`）；`mock_provider.py:MockProvider` 测试用。流式 `_parse_stream_event` 把 `content_block_start(tool_use)`→`tool_use_start`、`content_block_stop`→`tool_use_end`、`message_delta`→`stop`(usage)；`count_tokens` 精确，不可用回退 `len//4`；key 缺失标 `_available=False`，stream 抛 RuntimeError。无专属单测，经 `tests/test_loop.py`(5) 用 MockProvider 间接验证（接口解耦/逐 chunk 回调）。
 
 ### T5.2 Agentic Loop 主体
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T5.1
 - **范围**：调用 LLM → 解析 tool_use → 执行工具 → 反馈结果 → 直到最终回复；流式 text_delta 推飞书；中断 / 超时检测点。
 - **对应文档**：spec F3.3.1 / F3.3.2；design §6.5
 - **验收标准**：
-  - [ ] 无 tool_use 时正常终止并回复
-  - [ ] 多轮 tool_use 正常循环
-  - [ ] 流式 token 实时推飞书
+  - [x] 无 tool_use 时正常终止并回复
+  - [x] 多轮 tool_use 正常循环
+  - [x] 流式 token 实时推飞书
+- **完成记录**：`app/agent/loop.py:run_loop`（入口，`RunContext` 含 `abort: asyncio.Event`）：每轮跑 ContextManager → `_stream_round` 调 `provider.stream`（`tool_use_start` 累 tool_calls，`stop` 收 usage）→ append assistant message → 无 tool_use 返回最终文本 / 有则 `_execute_tools` 反馈 tool_result 继续。**只读并发/写串行**（F3.4.6）：`read_calls` 走 `asyncio.gather`，`write_calls` 顺序 await，按原 tool_calls 顺序返回保配对。流式 `evt.type=="text"`→`on_text` 推飞书。中断检查点：每轮开始 + `_exec_one` 入口查 `abort.is_set()`→`InterruptedError`；超时：`MAX_TOOL_ROUNDS=50` 超限抛 RuntimeError。埋点：每轮 `span("llm")`（聚合 stream token + calc_cost_usd）、每次工具 `span("tool"/"skill")`；未知工具回灌 `Error:` tool_result 让 Agent 自知（F3.3.12）。`tests/test_loop.py`(5) 覆盖 no_tools/tool_then_done/write_tool/abort/unknown_tool。
 
 ### T5.3 System Prompt 构建
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1d ｜ **依赖**：T5.2, T7.2
 - **范围**：按注入顺序拼接（design D24）：基础指令 → WS 级 AGENT.md → Repo 级 AGENT.md（当前 cwd）→ MEMORY.md 索引 → Skill descriptions。基础指令中含**并行子代理拆分指导**（D33：仅独立子任务并行、优先只读并行、写型需改不同文件、冲突则串行）。
 - **对应文档**：design D24 / D33；spec F3.3.9 / F3.9.3~F3.9.5
 - **验收标准**：
-  - [ ] 注入顺序符合 D24
-  - [ ] 多 repo 仅加载当前 cwd 所在 repo 的 AGENT.md
-  - [ ] system prompt 含 D33 拆分指导文案
+  - [x] 注入顺序符合 D24
+  - [x] 多 repo 仅加载当前 cwd 所在 repo 的 AGENT.md
+  - [x] system prompt 含 D33 拆分指导文案
+- **完成记录**：`app/agent/prompt.py:build_system_prompt` 按 D24 注入顺序（通用→具体，空段跳过，`"\n\n---\n\n"` 分隔）：① `_BASE_INSTRUCTIONS`（角色/安全）→ ② WS 级 AGENT.md → ③ Repo 级 AGENT.md（当前 cwd 所在 repo，多 repo 不拼接）→ ④ MEMORY.md 索引（chat 级，带 chat id 标注）→ ⑤ Skill descriptions（仅 name+description，D16 阶段 1）。`_BASE_INSTRUCTIONS` 内嵌 **D33 并行子代理拆分指导**（独立子任务并行/只读优先并行/写型确认不同文件无冲突，冲突或强依赖串行）、D22 memory 写入策略、F3.6.7 陈旧性校验、D18/D19 群聊归属。多 repo 仅加载 cwd 所在 repo 的 AGENT.md 由 `memory/loader.load_context_injections` 的 cwd 首段定位实现（见 T7.1）。无专属单测，注入效果由 `tests/test_run.py::test_start_run_injects_agent_md_and_memory` 端到端验证（三段标记进入 system）。
 
 ### T5.4 Session / Run 管理（1:1）
 - **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
@@ -456,31 +465,34 @@
 - **完成记录**：`agent/run.py` 建 Session+Run（1:1，D23）→ 抢 WS 锁 → run_loop → `save_session_jsonl` 落盘。**端到端闭环**（2026-07-11 补）：`feishu/handler.py` 接 `run_queue.submit`——路由 (app_id,chat_id)→FeishuChat→ws_id 后，`agent/runtime.build_registry`（内置 6 工具 + 挂载 Skill）+ `resolve_cwd` + `make_provider` 组装依赖，`FeishuRunCallbacks` 桥接卡片（on_queue/on_start 发卡、on_text 经 ProgressThrottler 节流 update_card 流式回复、on_done 成功 flush / 失败展示中断·取消·错误）。至此"飞书消息→Agent Run→流式回复"端到端真正打通（此前 B5 仅测试验证 start_run）。test_handler 覆盖 submit 入队参数/回调齐全、无 key 发错误卡、未绑 chat 不入队、非群聊忽略、回调节流+finalize+错误卡。
 
 ### T5.5 内置工具实现（只读类）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M3 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T5.2, T1.3
 - **范围**：`Read` / `Glob` / `Grep`（ripgrep）/ `WebFetch` / `WebSearch` / `TaskList` 系列 / `Plan Mode`。路径限定 `repos/` 与 `chats/{feishu_chat_id}/memory/`。
 - **对应文档**：design §5.1；spec F3.4.1 / F3.4.4 / D17
 - **验收标准**：
-  - [ ] 越界路径被拒绝并告知 Agent
-  - [ ] Grep 基于 ripgrep，大仓库可用
+  - [x] 越界路径被拒绝并告知 Agent
+  - [x] Grep 基于 ripgrep，大仓库可用
+- **完成记录**：`app/tools/builtin/{read,glob,grep}.py`（均 `read_only=True`）。路径限定经 `path_guard.resolve_tool_path`/`cwd_root`（Read）落 `workspaces/{ws_id}/repos/{cwd}/` 子树（+ memory/ 前缀约定见 T7.3）；`resolve_within` 抛 `PathEscapeError`→`PermissionError`→registry 回灌 `Error: path rejected`（F3.4.4）。Read：`offset/limit` 分段（默认 2000 行），`cat -n` 风格输出 + header。Glob：`root.glob(pattern)`，上限 200。Grep：调 `rg --line-number --no-heading --color=never -S`，输出截断 20000 chars（L0 源头节流）。`tests/test_builtin_tools.py`(5) 覆盖 read/not_found/越界拒/glob/registry defs。**偏差**：范围列的 WebFetch/WebSearch/TaskList/Plan Mode 未实现（MVP 内置工具集为 Read/Glob/Grep/Write/Edit/Bash 6 个），留作后续。
 
 ### T5.6 内置工具实现（写类 + Bash）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M3 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T5.5, T6.1
 - **范围**：`Write` / `Edit`（精确替换）/ `Bash`（路径校验 + Skill 脚本调用）。写操作抢 WS 锁（D20）。
 - **对应文档**：design §5.1 / D17 / D20；spec F3.4.4~F3.4.5
 - **验收标准**：
-  - [ ] Write/Edit 路径白名单正确（含 AGENT.md 两份文件白名单）
-  - [ ] Bash 越界命令拒绝
+  - [x] Write/Edit 路径白名单正确（含 AGENT.md 两份文件白名单）
+  - [x] Bash 越界命令拒绝
+- **完成记录**：`app/tools/builtin/{write,edit,bash}.py`（均 `read_only=False`）。Write 覆盖写 + `parent.mkdir(parents=True)`；Edit `old_string` 唯一替换一处，`count>1` 强制 `replace_all=true`（否则报 `Error: N matches; set replace_all=true`），`old_string not found` 报错，`replace_all=True` 全替换。Bash 在 `cwd_root(ctx)` 下 `sh -c` 执行，`_check_git_boundary` 文本匹配拦截写/网络类 git（commit/push/pull/fetch/merge/reset/rebase/cherry-pick/stash/clone/init/remote）→ `Error: git X is blocked`，只读 git status/diff/log 放行（D35）；stdout/stderr 各 cap 20000 chars，超时 120s kill。**抢 WS 锁**：写工具 `read_only=False`→Loop `_execute_tools` 编入 `write_calls` 顺序 await，锁本身由 Run 层 `WsLock` 持有整个 Run（D20，写工具内部不重复抢）。`tests/test_write_tools.py`(8) 覆盖 write 创建/越界拒/edit 唯一/edit 多匹配/git 拦写/git 放只读/bash 捕获/bash git commit 拦。AGENT.md 两份白名单：repo 级经 repos 子树可写，WS 级走管理 API（见 T7.1 已知偏差）。
 
 ### T5.7 Skill 工具（按需 invoke）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M3 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T5.5, T3.1
 - **范围**：每个挂载 Skill 自动生成 `skill__{name}` 工具；启动时仅注入 name+description；invoke 时后端读完整 SKILL.md 作为 tool_result 返回；`scripts/` 走 Bash、`resources/` 走 Read（design D16 三阶段）。
 - **对应文档**：design D15 / D16、§6.7；spec F3.4.3
 - **验收标准**：
-  - [ ] system prompt 仅含 description（不膨胀）
-  - [ ] invoke 后 SKILL.md 进入上下文，Agent 可按工作流调脚本 / 读资源
+  - [x] system prompt 仅含 description（不膨胀）
+  - [x] invoke 后 SKILL.md 进入上下文，Agent 可按工作流调脚本 / 读资源
+- **完成记录**：`app/tools/skill.py:SkillTool`（`__init__` 动态设 `name="skill__{skill_name}"`）+ `build_skill_tools(db, ws_id)`（查 WS 挂载 Skills `Skill join WorkspaceSkill` 构造列表）。启动仅注 description：`runtime.build_registry` 把 `{tool.name}: {tool.description}` 收进 `skill_descriptions`→prompt 层注"可用 Skills"段（D16 阶段 1 元信息层，不膨胀）。invoke `run` 读 `skill_dir(s.id)/SKILL.md` 全文返回（D16 阶段 2 内容层，不存在返 `Error: SKILL.md not found`）；scripts/走 Bash、resources/走 Read 由 Agent 读到 SKILL.md 后自主驱动（D16 阶段 3）。`tests/test_skill_tool.py`(2) 覆盖 returns_md/build_from_db。
 
 ### T5.8 MCP 客户端
 - **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
@@ -493,22 +505,23 @@
 - **完成记录**：`app/tools/mcp/` 模块新建：`client.py`（McpClient 封装官方 `mcp` SDK 的 ClientSession，支持 stdio + sse 两种 transport；connect/call_tool/close 生命周期管理；60s 超时 D37；crash 标 unavailable 回灌 error 文本）；`tool.py`（McpTool(Tool) 包装单个 MCP 工具为 `mcp__{name}` 工具，read_only 从 MCP 模型透传决定是否抢 WS 锁 D37）；`builder.py`（build_mcp_tools 查 WorkspaceMcp+MCP → decrypt_secrets 还原 config → 连接 → 发现工具 → 返回 (tools, clients)）。`runtime.py:build_registry` 改为返回 3-tuple `(registry, skill_descriptions, mcp_cleanup)`，mcp_cleanup 在 Run 结束后关闭 MCP 连接。`handler.py` 在 on_done 回调中调 mcp_cleanup。`core/security.py` 加 `decrypt_secrets()` 递归解密（镜像 encrypt_secrets，解密失败原样返回）。pyproject.toml 加 `mcp>=1.0`。test_mcp_tools 12 用例覆盖 decrypt_secrets roundtrip/passthrough/nested、McpTool 属性/run 委托/description fallback、build_mcp_tools 成功/连接失败降级/无挂载、build_registry 整合 + cleanup。156 tests 全通过。**偏差**：D37 进程池 + 引用计数 + 跨 Run 常驻留作后续优化，MVP 每 Run 按需连接/断开。
 
 ### T5.9 子代理（Agent 工具）+ 并行执行（D33 L1）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2/M3 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T5.2, T6.1
 - **范围**：`Agent` 工具委派子任务；主 Agent 一轮返回多个 Agent tool_use 时用 `asyncio.gather` 并发执行（非串行）；子代理独立上下文窗口、仅回最终消息；继承 chat MEMORY.md 索引 + WS/Repo AGENT.md；可重入复用父 Run 锁（不重复抢、子代理间写不二次串行）；并行度上限默认 5、超限排队；单个子代理失败标记回主 Agent 不一刀切；trace 用 subagent span 并列挂父 span。
 - **对应文档**：design D33 / §5.1 / §6.9（执行时序 + 拆分决策图）；spec F3.3.8~F3.3.9 / F3.4.1 / NF4.3.5
 - **验收标准**：
-  - [ ] 多个 Agent tool_use 并发执行（非 for 循环串行）
-  - [ ] 子代理独立上下文，仅最终消息回流到主 Agent
-  - [ ] 子代理可重入父 Run 锁，无阻塞 / 死锁
-  - [ ] 只读子代理真并行；写型子代理间不二次串行
-  - [ ] 单子代理失败不导致整 Run 失败
-  - [ ] 并行度超上限时排队
-  - [ ] subagent span 正确嵌套在父 span 下
-  - [ ] 执行时序与拆分判断符合 design §6.9 两张流程图
+  - [x] 多个 Agent tool_use 并发执行（非 for 循环串行）
+  - [x] 子代理独立上下文，仅最终消息回流到主 Agent
+  - [x] 子代理可重入父 Run 锁，无阻塞 / 死锁
+  - [x] 只读子代理真并行；写型子代理间不二次串行
+  - [x] 单子代理失败不导致整 Run 失败
+  - [x] 并行度超上限时排队（asyncio.Semaphore 默认 5，settings.agent_max_concurrency 可配）
+  - [x] subagent span 正确嵌套在父 span 下
+  - [x] 执行时序与拆分判断符合 design §6.9 两张流程图
+- **完成记录**：`app/agent/subagent.py:AgentTool`（`name="Agent"`, `read_only=True`, input_schema 单 `prompt` 字段）；并行由 `app/agent/loop.py::_execute_tools` 的 `read_calls` 走 `asyncio.gather` 承担（主 Agent 一轮返回多个 Agent tool_use 时并发）。子代理 `sub_ctx = RunContext(messages=[user prompt])` 独立上下文，仅 `run_loop` 最终文本回流父；`tool_ctx=ctx` 复用父 ws/cwd/锁，不重复抢（D33 可重入）；深度 1 防递归 `sub_registry(exclude={"Agent"})`；单失败 try/except 转 `Error: subagent failed: {e}` 不连坐；span 走 tool span 嵌套父 run span。`tests/test_subagent.py`(6) 覆盖 returns_final/can_use_tools/sub_registry_excludes_agent/semaphore 并发限流/单失败隔离。**接线已补齐（2026-07-13）**：`build_registry` 加 `provider` 参数，注册 `AgentTool(provider, registry, asyncio.Semaphore(settings.agent_max_concurrency))` → 默认飞书 Run 子代理工具可用；`AgentTool.__init__` 改 `(provider, registry, semaphore)`，`run()` 用 `ctx.system_prompt` 继承父 Run system（`ToolContext.system_prompt` 由 `_execute_run` 注入），`async with semaphore` 包 run_loop 实现并行度上限 + 超限排队（D33 默认 5）。`handler.py`/`test_runtime`/`test_mcp_tools` 同步传 provider。
 
 ### T5.10 上下文管理（自研四道防线）
-- **状态**：⚪ 未开始 ｜ **负责**：— ｜ **完成日**：—
+- **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10
 - **模块**：M2/M3 ｜ **优先级**：P0 ｜ **预估**：2d ｜ **依赖**：T5.2, T5.5, T5.6, T1.1
 - **范围**：自研四道防线（design D34），Provider 无关：
   - **L0 源头节流**：Bash stdout/stderr 各 cap（默认 20K chars）、Read 大文件分段限大小（与 D26 trace 截断独立）
@@ -519,12 +532,13 @@
   - 读 `workspace_settings.context_config`；clearing/compaction 各埋 context event span
 - **对应文档**：design D34；spec F3.3.10 / F3.7.8
 - **验收标准**：
-  - [ ] 长任务（超 limit 50%）触发 clearing，tool_result 替换为占位、tool_use 记录与配对不破坏
-  - [ ] clearing 后仍涨触发 compaction，摘要模型可指国内模型（GLM）
-  - [ ] 切换 Provider（Claude→GLM）上下文管理照常工作（`TokenCounter` 适配）
-  - [ ] WS 级配置生效（阈值 / `clear_keep` / `compact_recent` / instructions 可覆盖默认）
-  - [ ] 三层后仍超 95% 优雅中断并告知用户
-  - [ ] clearing / compaction 各产 context event span（记命中层 / 前后 token / 压缩比）
+  - [x] 长任务（超 limit 50%）触发 clearing，tool_result 替换为占位、tool_use 记录与配对不破坏
+  - [x] clearing 后仍涨触发 compaction，摘要模型可指国内模型（GLM）
+  - [x] 切换 Provider（Claude→GLM）上下文管理照常工作（`TokenCounter` 适配）
+  - [x] WS 级配置生效（阈值 / `clear_keep` / `compact_recent` / instructions 可覆盖默认）
+  - [x] 三层后仍超 95% 优雅中断并告知用户
+  - [x] clearing / compaction 各产 context event span（记命中层 / 前后 token / 压缩比）
+- **完成记录**：`app/agent/context.py:ContextManager` + `ContextLimitError`。**L0 源头节流**：在工具层（Bash/Grep cap 20000、Read 分段，见 T5.5/T5.6）。**L1 clearing**：`token > trigger1`（默认 `context_window*0.5`）→ `_clear_old_tool_results` 保留最近 `clear_keep=6` 个 tool_result，其余 content 替换占位 `[cleared; re-call ...]`，**只动 tool_result.content 不删消息/不改 id**，保留 tool_use 配对不变量（Anthropic 配对齐全）；支持 `exclude_tools` 跳过指定工具。**L4 硬兜底**：clearing/compaction 后仍 `> hard`(`*0.95`)→抛 `ContextLimitError`→Loop 中断告知。TokenCounter 复用 `provider.count_tokens`；WS 级配置经 `ContextConfig`（trigger1/trigger2/clear_keep/compact_recent/summary_provider/summary_model/compact_instructions/exclude_tools）可调。**接线 + L2/L3 已补齐（2026-07-13）**：(1) 全链透传——`_execute_run`→`start_run`→`RunQueue.submit/_drive` 加 `context_manager` 参数，`handler.py` 读 `ws.context_config` 经 `ContextConfig.from_ws` + `make_summary_provider(cfg)` 构造 ContextManager 传入，默认飞书 Run 启用四道防线。(2) **L2 compaction**：`_compact` 把较早历史压成结构化摘要（按 tool_call_id 配对整段替换，保 tool_use/tool_result 不断裂），摘要 provider WS 级可配任意 OpenAI 兼容服务（智谱/通义/DeepSeek/Moonshot，design「如 GLM」举例的泛化）。(3) **L3 memory 联动**：compaction 后 in-place 注入强信号 user 消息，靠 D22 让主 Agent 收口写 chat memory。(4) **context event span**：新增 `SpanType.context`，L1/L2 各埋一条（attributes 记 layer/event_type/before/after token/ratio）。(5) 新建 `app/providers/openai_compatible_provider.py`（httpx 打**任意** OpenAI 兼容端点，**不绑定厂商**——智谱/通义/DeepSeek/Moonshot 任配 base_url+api_key+model，对齐 design「Provider 无关 + 如 GLM 举例」；无新依赖）+ `app/agent/context_config.py`（9 key schema + from_ws 容错）；`config.py` 加 `openai_compatible_*`（api_key/base_url/model 通用三件套）/agent_max_concurrency。`tests/test_context.py`(7) 覆盖 below_trigger/l1_clearing/l4_hard_limit/l2_compaction/tool_pairing/exclude_tools/span_noop；`tests/test_openai_compatible_provider.py`(6，含 DeepSeek 端点通用性验证) + `tests/test_context_config.py`(5)。225 tests 全过。
 
 > **切片验收点 P5**：群里提需求 → Agent 跑完工具链 → 流式回复 + 代码修改落盘（单 WS 串行下）。
 

@@ -5,7 +5,7 @@
 
 import pytest
 
-from app.agent.runtime import build_registry
+from app.agent.runtime import build_registry, make_provider
 from app.config import settings
 from app.core.security import decrypt_secrets, encrypt_secrets
 from app.db.models import MCP, User, Workspace, WorkspaceMcp
@@ -228,7 +228,7 @@ async def test_build_registry_with_mcp(monkeypatch):
     monkeypatch.setattr(McpClient, "connect", _fake_connect)
 
     async with async_session_factory() as db:
-        registry, _descs, mcp_cleanup = await build_registry(db, ws_id)
+        registry, _descs, mcp_cleanup = await build_registry(db, ws_id, make_provider())
 
     names = set(registry.names())
     assert "mcp__lookup" in names
@@ -254,6 +254,6 @@ async def test_build_registry_without_mcp_returns_none_cleanup():
         ws_id = ws.id
 
     async with async_session_factory() as db:
-        registry, _, mcp_cleanup = await build_registry(db, ws_id)
+        registry, _, mcp_cleanup = await build_registry(db, ws_id, make_provider())
     assert mcp_cleanup is None
     assert {"Read", "Write", "Bash"} <= set(registry.names())

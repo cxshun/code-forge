@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from redis.asyncio import Redis
 
+from app.agent.context import ContextManager
 from app.agent.lock import WsLock
 from app.agent.run import _create_run, _execute_run, _set_run_status
 from app.core.redis_client import redis as redis_client
@@ -59,6 +60,7 @@ class _RunParams:
     registry: ToolRegistry
     cwd: str = ""
     skill_descriptions: list[str] | None = None
+    context_manager: ContextManager | None = None
     on_text: OnText | None = None
     on_tool_call: OnToolCall | None = None
     on_done: OnDone | None = None
@@ -130,6 +132,7 @@ class RunQueue:
         cwd: str = "",
         skill_descriptions: list[str] | None = None,
         trigger_message_id: str | None = None,
+        context_manager: ContextManager | None = None,
         on_text: OnText | None = None,
         on_tool_call: OnToolCall | None = None,
         on_queue: OnQueue | None = None,
@@ -153,6 +156,7 @@ class RunQueue:
             registry=registry,
             cwd=cwd,
             skill_descriptions=skill_descriptions,
+            context_manager=context_manager,
             on_text=on_text,
             on_tool_call=on_tool_call,
             on_done=on_done,
@@ -186,6 +190,7 @@ class RunQueue:
                 cwd=p.cwd,
                 skill_descriptions=p.skill_descriptions,
                 abort=ar.abort,
+                context_manager=p.context_manager,
                 on_text=p.on_text,
                 on_tool_call=p.on_tool_call,
             )

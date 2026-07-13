@@ -45,6 +45,16 @@ class Settings(BaseSettings):
 
     # Anthropic（占位，T5.1 用；国内可切 GLM，见 D3）
     anthropic_api_key: str = ""
+    anthropic_model: str = ""  # 留空则用 Provider 默认（claude-sonnet-5）
+
+    # OpenAI 兼容端点（D3 多模型备选 / D34 摘要模型可指）：智谱 GLM / 通义 / DeepSeek /
+    # Moonshot 等任意 OpenAI Chat Completions 兼容服务。三项都填才启用，不绑定具体厂商。
+    openai_compatible_api_key: str = ""
+    openai_compatible_base_url: str = ""  # 如 https://open.bigmodel.cn/api/paas/v4
+    openai_compatible_model: str = ""  # 如 glm-4.6 / qwen-plus / deepseek-chat
+
+    # 子代理并行度上限（design D33：防 fork 爆炸，超限排队）
+    agent_max_concurrency: int = 5
 
     # 文件系统根（design §2.3 工作空间 / 全局广场）
     data_dir: str = "./data"

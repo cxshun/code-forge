@@ -8,6 +8,7 @@
 子代理的 registry 排除 ``Agent``（MVP 深度 1，防无限递归）。
 """
 
+import asyncio
 from typing import ClassVar
 
 from app.agent.loop import RunContext, run_loop
@@ -34,22 +35,24 @@ class AgentTool(Tool):
         self,
         provider: Provider,
         registry: ToolRegistry,
-        system: str = "",
+        semaphore: asyncio.Semaphore,
     ) -> None:
         self._provider = provider
         self._registry = registry
-        self._system = system
+        self._semaphore = semaphore
 
     async def run(self, input: dict, ctx: ToolContext) -> str:
         prompt = input.get("prompt", "")
         # 子代理 registry 排除 Agent（深度 1，防递归）
         sub_registry = self._registry.sub_registry(exclude={"Agent"})
         sub_ctx = RunContext(
-            system=self._system,
+            system=ctx.system_prompt,  # 继承父 Run 的 system（WS/Repo AGENT.md + MEMORY）
             messages=[Message(role="user", content=prompt)],
             tool_ctx=ctx,  # 复用父 ws/cwd/锁
         )
         try:
-            return await run_loop(self._provider, sub_ctx, sub_registry)
+            # 并行度上限（D33）：超限的子代理在 semaphore 处排队，防 fork 爆炸
+            async with self._semaphore:
+                return await run_loop(self._provider, sub_ctx, sub_registry)
         except Exception as e:
             return f"Error: subagent failed: {e}"

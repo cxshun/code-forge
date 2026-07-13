@@ -11,11 +11,14 @@
 
 import logging
 
+from app.agent.context import ContextManager
+from app.agent.context_config import ContextConfig
 from app.agent.queue import RunCancelled, run_queue
 from app.agent.runtime import (
     build_registry,
     fetch_quote_text,
     make_provider,
+    make_summary_provider,
     resolve_cwd,
 )
 from app.config import settings
@@ -130,8 +133,10 @@ async def handle_message(
         ws_id = chat.workspace_id
         feishu_chat_id = chat.id
         ws = await db.get(Workspace, ws_id)
-        registry, skill_descriptions, mcp_cleanup = await build_registry(db, ws_id)
+        provider = make_provider()
+        registry, skill_descriptions, mcp_cleanup = await build_registry(db, ws_id, provider)
         cwd = await resolve_cwd(db, ws)
+        ctx_cfg = ContextConfig.from_ws(ws.context_config)
 
     client = FeishuClient(app_id, app_secret)
     footer = f"sender {ctx.sender_open_id[-8:]}" if ctx.sender_open_id else None
@@ -154,6 +159,13 @@ async def handle_message(
 
     callbacks = FeishuRunCallbacks(client, ctx.chat_id, footer)
 
+    # 上下文管理（D34）：按 WS context_config 构造四道防线编排器
+    cm = (
+        ContextManager(provider, ctx_cfg, make_summary_provider(ctx_cfg))
+        if ctx_cfg.enabled
+        else None
+    )
+
     # MCP 连接在 Run 结束后关闭（成功 / 失败 / 中断 / 取消均执行）
     orig_on_done = callbacks.on_done
 
@@ -169,11 +181,12 @@ async def handle_message(
         ws_id=ws_id,
         feishu_chat_id=feishu_chat_id,
         user_message=user_message,
-        provider=make_provider(),
+        provider=provider,
         registry=registry,
         cwd=cwd,
         skill_descriptions=skill_descriptions,
         trigger_message_id=ctx.message_id,
+        context_manager=cm,
         on_text=callbacks.on_text,
         on_tool_call=callbacks.on_tool_call,
         on_queue=callbacks.on_queue,

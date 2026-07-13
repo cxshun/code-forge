@@ -70,7 +70,7 @@ def _parse_stream_event(event) -> StreamEvent | None:
 class AnthropicProvider(Provider):
     """Anthropic Claude Provider 实现。"""
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         key = api_key or settings.anthropic_api_key
         if not key:
             log.warning("anthropic_api_key 未设置; Provider 在 chat/stream 时会失败")
@@ -78,7 +78,7 @@ class AnthropicProvider(Provider):
             return
         self._available = True
         self._client = anthropic.AsyncAnthropic(api_key=key)
-        self._model = getattr(settings, "anthropic_model", _DEFAULT_MODEL)
+        self._model = model or settings.anthropic_model or _DEFAULT_MODEL
         self._ctx_window = _FALLBACK_CTX
 
     @property

@@ -235,7 +235,7 @@ backend/
 │   ├── providers/              # M2 LLM 抽象（D3）
 │   │   ├── base.py             # Provider 接口 + TokenCounter + context_window
 │   │   ├── anthropic_provider.py
-│   │   └── glm_provider.py     # 国内模型备选（规避封禁）
+│   │   └── openai_compatible_provider.py  # OpenAI 兼容（国内模型备选，规避封禁；智谱/通义/DeepSeek 等通用，不绑厂商）
 │   ├── tools/                  # M3 工具层
 │   │   ├── base.py / registry.py
 │   │   ├── path_guard.py       # resolve_within 路径安全（D17）

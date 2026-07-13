@@ -20,6 +20,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.agent.context import ContextManager
 from app.agent.lock import WsLock
 from app.agent.loop import RunContext, run_loop
 from app.agent.prompt import build_system_prompt
@@ -111,6 +112,7 @@ async def _execute_run(
     cwd: str = "",
     skill_descriptions: list[str] | None = None,
     abort: asyncio.Event | None = None,
+    context_manager: ContextManager | None = None,
     on_text=None,
     on_tool_call=None,
 ) -> str:
@@ -148,13 +150,15 @@ async def _execute_run(
                     workspaces_root=settings.workspaces_root,
                     cwd=cwd,
                     feishu_chat_id=feishu_chat_id,
+                    system_prompt=system,
                 ),
                 run_id=run_id,
                 abort=abort or asyncio.Event(),
             )
 
             final = await run_loop(
-                provider, ctx, registry, on_text=on_text, on_tool_call=on_tool_call
+                provider, ctx, registry, on_text=on_text, on_tool_call=on_tool_call,
+                context_manager=context_manager,
             )
 
             save_session_jsonl(ws_id, feishu_chat_id, session_id, ctx.messages)
@@ -187,6 +191,7 @@ async def start_run(
     cwd: str = "",
     skill_descriptions: list[str] | None = None,
     trigger_message_id: str | None = None,
+    context_manager: ContextManager | None = None,
     on_text=None,
     on_tool_call=None,
     lock_timeout_s: float = 30,
@@ -214,6 +219,7 @@ async def start_run(
             registry=registry,
             cwd=cwd,
             skill_descriptions=skill_descriptions,
+            context_manager=context_manager,
             on_text=on_text,
             on_tool_call=on_tool_call,
         )

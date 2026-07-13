@@ -1,20 +1,27 @@
-"""上下文管理测试（T5.10 验收）。"""
-
+"""上下文管理测试（T5.10 验收：L1/L2/L3/L4 + exclude_tools + context span）。"""
 
 import pytest
 
 from app.agent.context import ContextLimitError, ContextManager
+from app.agent.context_config import ContextConfig
 from app.providers.base import Message, Provider, Usage
 
 pytestmark = pytest.mark.asyncio
 
 
 class _FakeProvider(Provider):
-    """可控 token 计数的假 Provider（不调 LLM）。"""
+    """可控 token 计数 + 可选摘要文本的假 Provider（不调真实 LLM）。"""
 
-    def __init__(self, context_window: int, tokens_map: dict):
+    def __init__(
+        self,
+        context_window: int = 10000,
+        tokens: dict | None = None,
+        summary_text: str | None = None,
+    ) -> None:
         self._window = context_window
-        self._tokens_map = tokens_map  # id(messages) -> tokens
+        self._tokens = tokens or {}  # id(messages) -> tokens
+        self._summary_text = summary_text
+        self.chat_calls = 0
 
     @property
     def context_window(self) -> int:
@@ -29,11 +36,11 @@ class _FakeProvider(Provider):
         return "fake"
 
     async def count_tokens(self, messages, system=None):
-        # 返回预设的 tokens（按 messages 对象 id 查），便于测试触发阈值
-        return Usage(input_tokens=self._tokens_map.get(id(messages), 0))
+        return Usage(input_tokens=self._tokens.get(id(messages), 0))
 
     async def chat(self, messages, tools=None, system=None):
-        raise NotImplementedError
+        self.chat_calls += 1
+        return [Message(role="assistant", content=self._summary_text or "summary")], Usage()
 
     async def stream(self, messages, tools=None, system=None):
         raise NotImplementedError
@@ -43,39 +50,40 @@ class _FakeProvider(Provider):
 def _msgs(n_tool_results: int) -> list[Message]:
     msgs = [Message(role="user", content="q")]
     for i in range(n_tool_results):
-        msgs.append(Message(role="assistant", content=f"step{i}", tool_calls=[{"id": f"t{i}", "name": "Read", "input": "{}"}]))
+        msgs.append(
+            Message(
+                role="assistant",
+                content=f"step{i}",
+                tool_calls=[{"id": f"t{i}", "name": "Read", "input": "{}"}],
+            )
+        )
         msgs.append(Message(role="tool_result", tool_call_id=f"t{i}", content="x" * 500))
     return msgs
 
 
 async def test_no_clearing_below_trigger():
     msgs = _msgs(3)
-    provider = _FakeProvider(context_window=10000, tokens_map={id(msgs): 100})
-    cm = ContextManager(provider, clear_keep=2)
+    provider = _FakeProvider(context_window=10000, tokens={id(msgs): 100})
+    cm = ContextManager(provider, ContextConfig(clear_keep=2))
     res = await cm.manage(msgs)
     assert res["layer"] is None
-    # tool_result 未被清
-    assert all(m.content != "[cleared; re-call the tool to refetch if needed]" for m in msgs if m.role == "tool_result")
 
 
 async def test_l1_clearing_old_tool_results():
-    msgs = _msgs(5)  # 5 个 tool_result
-    # 首次计数超 trigger1（5000），清后计数降低
-    provider = _FakeProvider(context_window=10000, tokens_map={})
-    # 用副作用：count_tokens 第一次返回 6000，清后返回 2000
+    msgs = _msgs(5)
     calls = {"n": 0}
 
     async def fake_count(messages, system=None):
         calls["n"] += 1
         return Usage(input_tokens=6000 if calls["n"] == 1 else 2000)
 
+    provider = _FakeProvider()
     provider.count_tokens = fake_count  # type: ignore[method-assign]
-    cm = ContextManager(provider, trigger1_pct=0.5, clear_keep=2)
+    cm = ContextManager(provider, ContextConfig(trigger1=0.5, clear_keep=2))
     res = await cm.manage(msgs)
     assert res["layer"] == "L1"
     assert res["before"] == 6000
     assert res["after"] == 2000
-    # 保留最后 2 个 tool_result 未清，前 3 个被占位
     tool_results = [m for m in msgs if m.role == "tool_result"]
     cleared = [m for m in tool_results if m.content.startswith("[cleared")]
     kept = [m for m in tool_results if not m.content.startswith("[cleared")]
@@ -85,15 +93,81 @@ async def test_l1_clearing_old_tool_results():
 
 async def test_l4_hard_limit_aborts():
     msgs = _msgs(5)
-    calls = {"n": 0}
 
     async def fake_count(messages, system=None):
-        calls["n"] += 1
-        # 清后仍超 95%（9500）
-        return Usage(input_tokens=9800)
+        return Usage(input_tokens=9800)  # 恒超 95%（9500）
 
-    provider = _FakeProvider(context_window=10000, tokens_map={})
+    provider = _FakeProvider()
     provider.count_tokens = fake_count  # type: ignore[method-assign]
-    cm = ContextManager(provider, clear_keep=2)
+    cm = ContextManager(provider, ContextConfig(clear_keep=2))
     with pytest.raises(ContextLimitError):
         await cm.manage(msgs)
+
+
+async def test_l2_compaction_replaces_old_history():
+    """L1 后仍超 trigger2 → L2 压缩旧历史为摘要 + L3 注入强信号。"""
+    msgs = _msgs(6)
+
+    async def fake_count(messages, system=None):
+        return Usage(input_tokens=8000)  # > trigger1(5000) 且 > trigger2(7500)，< hard(9500)
+
+    provider = _FakeProvider(summary_text="COMPACTED SUMMARY")
+    provider.count_tokens = fake_count  # type: ignore[method-assign]
+    cm = ContextManager(
+        provider, ContextConfig(trigger1=0.5, trigger2=0.75, compact_recent=2, clear_keep=2)
+    )
+    res = await cm.manage(msgs)
+    assert res["layer"] == "L2"
+    assert res["compacted"] is True
+    # 第一条被替换为摘要
+    assert "[历史摘要]" in (msgs[0].content or "")
+    assert "COMPACTED SUMMARY" in msgs[0].content
+    # L3 强信号注入
+    assert any("系统提示" in (m.content or "") for m in msgs)
+    # 摘要 provider 被调一次
+    assert provider.chat_calls == 1
+
+
+async def test_l2_keeps_tool_use_pairing():
+    """L2 压缩后保留段的 tool_use ↔ tool_result 配对完整（无孤立 tool_use）。"""
+    msgs = _msgs(6)
+
+    async def fake_count(messages, system=None):
+        return Usage(input_tokens=8000)
+
+    provider = _FakeProvider(summary_text="S")
+    provider.count_tokens = fake_count  # type: ignore[method-assign]
+    cm = ContextManager(provider, ContextConfig(compact_recent=2, clear_keep=2))
+    await cm.manage(msgs)
+    tu_ids = [tc["id"] for m in msgs if m.tool_calls for tc in m.tool_calls]
+    tr_ids = [m.tool_call_id for m in msgs if m.role == "tool_result"]
+    assert set(tu_ids) == set(tr_ids), "tool_use/tool_result 配对断裂"
+
+
+async def test_exclude_tools_protected_from_clearing():
+    """exclude_tools 命中的工具 result 不被 L1 清。"""
+    msgs = _msgs(5)
+
+    async def fake_count(messages, system=None):
+        return Usage(input_tokens=6000)  # > trigger1
+
+    provider = _FakeProvider()
+    provider.count_tokens = fake_count  # type: ignore[method-assign]
+    cm = ContextManager(provider, ContextConfig(clear_keep=2, exclude_tools=["Read"]))
+    res = await cm.manage(msgs)
+    # 全部 tool_result 来自 Read，被 exclude 保护 → cleared=0
+    assert res["cleared"] == 0
+
+
+async def test_context_span_noop_without_trace():
+    """无 trace 上下文时 manage 正常完成（context span 走 no-op，不报错）。"""
+    msgs = _msgs(5)
+
+    async def fake_count(messages, system=None):
+        return Usage(input_tokens=6000)
+
+    provider = _FakeProvider()
+    provider.count_tokens = fake_count  # type: ignore[method-assign]
+    cm = ContextManager(provider, ContextConfig(clear_keep=2))
+    res = await cm.manage(msgs)
+    assert res["layer"] == "L1"

@@ -26,6 +26,7 @@ class SpanType(enum.StrEnum):
     subagent = "subagent"
     interrupt = "interrupt"
     error = "error"
+    context = "context"  # 上下文管理事件（D34：clearing / compaction）
 
 
 class SpanStatus(enum.StrEnum):
