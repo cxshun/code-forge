@@ -3,7 +3,8 @@
 # 用法：
 #   1. cp deploy/.env.prod.example .env.prod && 编辑注入强随机值
 #   2. docker compose -f deploy/docker-compose.prod.yml --env-file .env.prod up -d --build
-#   3. 首次部署后创建管理员：docker compose -f deploy/docker-compose.prod.yml exec backend python scripts/init_admin.py
+#   3. 初始管理员由 backend entrypoint 自动幂等创建：在 .env.prod 配
+#      INIT_ADMIN_PASSWORD 即创建（用户名默认 admin）；未配则跳过并告警，不影响启动
 #
 # 与 docker-compose.yml（本地开发）的区别：
 # - 无源码挂载，镜像内打包
@@ -55,7 +56,7 @@ services:
     build:
       context: ../backend
       dockerfile: ../deploy/Dockerfile.backend
-    command: sh -c "uv run alembic upgrade head && exec uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "uv run alembic upgrade head && uv run python scripts/init_admin.py && exec uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
       APP_ENV: prod
       PG_DSN: postgresql+asyncpg://${PG_USER:-codeforge}:${PG_PASSWORD}@postgres:5432/${PG_DB:-codeforge}

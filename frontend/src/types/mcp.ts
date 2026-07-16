@@ -4,6 +4,7 @@ export interface McpOut {
   type: 'stdio' | 'http'
   config: Record<string, unknown>
   owner_id: number
+  owner_name?: string
   visibility: 'private' | 'public'
   read_only: boolean
 }

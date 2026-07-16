@@ -280,8 +280,8 @@ onMounted(fetchDetail)
           <el-form-item label="名称">
             <el-input v-model="editName" />
           </el-form-item>
-          <el-form-item label="Owner ID">
-            <span>{{ ws.owner_id }}</span>
+          <el-form-item label="所有者">
+            <span>{{ ws.owner_name || `#${ws.owner_id}` }}</span>
           </el-form-item>
           <el-form-item label="Context Config">
             <el-input v-model="editConfig" type="textarea" :rows="10" style="font-family: monospace" />

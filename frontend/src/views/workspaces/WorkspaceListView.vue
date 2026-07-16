@@ -73,7 +73,11 @@ onMounted(fetchList)
 
     <el-table :data="workspaces" v-loading="loading" @row-click="goToDetail" style="cursor: pointer">
       <el-table-column prop="name" label="名称" />
-      <el-table-column prop="owner_id" label="Owner ID" width="120" />
+      <el-table-column label="所有者" width="120">
+        <template #default="{ row }">
+          {{ row.owner_name || `#${row.owner_id}` }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="100" align="center">
         <template #default="{ row }">
           <el-button text type="danger" @click.stop="onDelete(row)">删除</el-button>

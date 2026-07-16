@@ -3,6 +3,7 @@ export interface SkillOut {
   name: string
   description: string
   owner_id: number
+  owner_name?: string
   visibility: 'private' | 'public'
   dir_path: string
   mounted_count?: number

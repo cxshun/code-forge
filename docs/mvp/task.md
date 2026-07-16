@@ -458,11 +458,13 @@
 - **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-11
 - **模块**：M2 ｜ **优先级**：P0 ｜ **预估**：1.5d ｜ **依赖**：T5.2, T1.1
 - **范围**：1 Session = 1 Run（design D23）；每次消息触发新 Session + 新 Run；会话历史落盘 JSONL（简化 messages 数组，供下次加载）。
-- **对应文档**：design D23；spec F3.3.7
+- **对应文档**：design D23 / D40；spec F3.3.7 / F3.3.14
 - **验收标准**：
   - [x] 每条消息独立 Session/Run
   - [x] JSONL 落盘且可被下次 Run 加载
+  - [x] 跨 session 历史加载：新 Run 启动时从最近已完成 session 加载对话历史（D40）
 - **完成记录**：`agent/run.py` 建 Session+Run（1:1，D23）→ 抢 WS 锁 → run_loop → `save_session_jsonl` 落盘。**端到端闭环**（2026-07-11 补）：`feishu/handler.py` 接 `run_queue.submit`——路由 (app_id,chat_id)→FeishuChat→ws_id 后，`agent/runtime.build_registry`（内置 6 工具 + 挂载 Skill）+ `resolve_cwd` + `make_provider` 组装依赖，`FeishuRunCallbacks` 桥接卡片（on_queue/on_start 发卡、on_text 经 ProgressThrottler 节流 update_card 流式回复、on_done 成功 flush / 失败展示中断·取消·错误）。至此"飞书消息→Agent Run→流式回复"端到端真正打通（此前 B5 仅测试验证 start_run）。test_handler 覆盖 submit 入队参数/回调齐全、无 key 发错误卡、未绑 chat 不入队、非群聊忽略、回调节流+finalize+错误卡。
+  **跨 session 历史加载**（2026-07-16 补，design D40 / spec F3.3.14）：`agent/run.py` 新增 `load_chat_history`——新 Run 启动时查询该 chat 最近一个 `completed` session，读 JSONL 并过滤 tool_result / tool_calls（跨 session 无用且避免 Provider 配对校验错误），取最后 `chat_history_max_messages` 条（默认 20，`config.py` 可配）拼接到当前 user message 之前。加载失败 best-effort 不阻断 Run。验证：连续两次 `start_run` 同一 chat，第二次 LLM 调用收到 [user]→[assistant]→[user] 三条消息，历史正确传递。
 
 ### T5.5 内置工具实现（只读类）
 - **状态**：✅ 已完成 ｜ **负责**：cxshun ｜ **完成日**：2026-07-10

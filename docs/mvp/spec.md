@@ -87,13 +87,14 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 - **F3.3.4** **排队反馈**：Run 入队时推送"⏳ 排队中，前面 N 个"，抢到锁时推送"▶️ 开始执行"
 - **F3.3.5** **取消 / 中断**：排队中可"取消排队"立即从队列移除；运行中可中断，信号传到 Agent Loop 异步中止
 - **F3.3.6** **超时保护**：单 Run 硬超时 10 分钟，超时后强制中止并释放锁
-- **F3.3.7** 1 个 Session = 1 个 Run（详见 design D23）
+- **F3.3.7** 1 个 Session = 1 个 Run（详见 design D23）；新 Run 启动时自动加载该 chat 最近一次已完成 session 的对话历史（仅 user/assistant 文本，过滤 tool 消息，详见 design D40）
 - **F3.3.8** **并行子代理**：主 Agent 可在单 Run 内并行启动多个子代理（独立上下文窗口，仅回最终消息），用于可独立拆分的子任务；只读子代理天然并行，写型子代理复用父 Run 锁（详见 design D33）
 - **F3.3.9** **拆分判断责任**：主 Agent 负责判断子任务是否可安全并行（无写冲突 / 无强依赖），system prompt 提供拆分指导；存在冲突时串行（详见 design D33）
 - **F3.3.10** **上下文管理（自研分层）**：Agentic Loop 多轮 tool_result 累积，需显式管理。采用**四道防线**逐级处理（按成本从低到高）：L0 工具结果源头节流（Bash/Read 输出截断）→ L1 tool-result clearing（旧结果替换为占位、保留 tool_use 记录、可重取、零推理）→ L2 compaction（旧历史压成结构化摘要）→ L3 memory 联动（compaction 前强信号沉淀 chat memory）→ L4 硬兜底（仍超 limit 95% 则中断告知）。**自研、Provider 无关**（不依赖 Anthropic 一方 context editing beta，规避 Claude 国内封禁），机制本身只要 Provider 给出 token 计数与 context window 即可工作；摘要模型可指定国内模型（如 GLM）。支持 WS 级配置（F3.7.8，详见 design D34）
 - **F3.3.11** **循环兜底**：除单 Run 10 min 硬超时外，设最大 tool_use 轮数上限（默认 50，可配置），防 Agent 空转烧 token；触顶中断并告知用户
 - **F3.3.12** **错误处理与重试**：工具失败（Bash 退出码非 0 / MCP 不可用 / 路径越界）作为 `tool_result`（is_error）回灌 Agent 自主决策（不一刀切中断）；LLM 调用失败（429/5xx/超时）由 Provider 层指数退避重试（默认 3 次），仍失败则中断 Run（详见 design §6.5）
 - **F3.3.13** **中断执行语义**：排队中取消=立即移除无副作用；运行中中断=当前工具完成/被 kill 后停止 Loop，Bash 走 SIGTERM→SIGKILL、子代理级联中断；已落盘改动**保留不回滚**（详见 design §6.6）
+- **F3.3.14** **跨 session 对话历史加载**：新 Run 启动时从该 chat 最近一次已完成 session 加载对话历史（仅 user/assistant 文本，过滤 tool_result 与 tool_calls），拼接到当前 user message 之前；条数上限可配置（`chat_history_max_messages`，默认 20）；加载失败不阻断 Run（详见 design D40）
 
 ### 3.4 工具系统
 

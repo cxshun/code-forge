@@ -7,6 +7,7 @@ export interface WorkspaceOut {
   id: number
   name: string
   owner_id: number
+  owner_name?: string
   context_config: Record<string, unknown> | null
   cwd_repo_id: number | null
 }

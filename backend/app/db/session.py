@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import settings
 
 engine = create_async_engine(
-    settings.pg_dsn,
+    settings.pg_dsn_effective,
     pool_pre_ping=True,
     echo=False,
     pool_size=10,

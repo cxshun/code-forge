@@ -25,12 +25,13 @@ from app.workspace.fs import create_skill_skeleton, skill_dir
 router = APIRouter(prefix="/skills", tags=["skills"])
 
 
-def _skill_out(s: Skill) -> SkillOut:
+def _skill_out(s: Skill, owner_name: str = "") -> SkillOut:
     return SkillOut(
         id=s.id,
         name=s.name,
         description=s.description,
         owner_id=s.owner_id,
+        owner_name=owner_name or "",
         visibility=s.visibility,
         dir_path=s.dir_path,
     )
@@ -68,7 +69,18 @@ async def list_skills(
     if q:
         stmt = stmt.where(Skill.name.ilike(f"%{q}%"))
     skills = (await db.scalars(stmt.order_by(Skill.id))).all()
-    return {"items": [_skill_out(s) for s in skills], "total": len(skills)}
+    # 批量解析 owner 名称
+    owner_ids = {s.owner_id for s in skills}
+    owner_map: dict[int, str] = {}
+    if owner_ids:
+        users = (
+            await db.scalars(select(User).where(User.id.in_(owner_ids)))
+        ).all()
+        owner_map = {u.id: u.username for u in users}
+    return {
+        "items": [_skill_out(s, owner_name=owner_map.get(s.owner_id, "")) for s in skills],
+        "total": len(skills),
+    }
 
 
 @router.post("", status_code=201)
@@ -116,7 +128,7 @@ async def create_skill(
     skill.dir_path = str(d)
     await db.commit()
     await db.refresh(skill)
-    return _skill_out(skill)
+    return _skill_out(skill, owner_name=user.username)
 
 
 @router.get("/{skill_id}")
@@ -137,7 +149,8 @@ async def get_skill(
             .where(WorkspaceSkill.skill_id == skill_id)
         )
     ) or 0
-    out = _skill_out(s).model_dump()
+    owner = await db.get(User, s.owner_id)
+    out = _skill_out(s, owner_name=owner.username if owner else "").model_dump()
     out["mounted_count"] = count
     return out
 
@@ -159,7 +172,7 @@ async def patch_skill(
         s.visibility = body.visibility
     await db.commit()
     await db.refresh(s)
-    return _skill_out(s)
+    return _skill_out(s, owner_name=user.username)
 
 
 @router.delete("/{skill_id}", status_code=204)

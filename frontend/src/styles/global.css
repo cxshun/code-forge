@@ -1,0 +1,165 @@
+/* ============================================================
+ * 全局样式（在 element-plus css 之后引入，确保优先级）
+ * 设计主题：现代 SaaS · 靛蓝（精致增强版）
+ *   深色侧栏 + 渐变品牌 + 渐变主按钮 + 卡片精致阴影
+ * ========================================================= */
+
+/* ---------- 设计 token ---------- */
+:root {
+  /* 主色 #6366F1 及色阶 */
+  --el-color-primary: #6366f1;
+  --el-color-primary-light-3: #8183f4;
+  --el-color-primary-light-5: #a4a6f7;
+  --el-color-primary-light-7: #c7c8fa;
+  --el-color-primary-light-8: #d8d9fc;
+  --el-color-primary-light-9: #e9e9fd;
+  --el-color-primary-dark-2: #4f4ec6;
+
+  /* 品牌渐变 */
+  --cf-gradient-brand: linear-gradient(135deg, #6366f1 0%, #8b8cf7 100%);
+  --cf-gradient-brand-deep: linear-gradient(135deg, #5457e0 0%, #7c7df5 100%);
+  --cf-sidebar-gradient: linear-gradient(180deg, #1e1b3a 0%, #2a2766 100%);
+
+  /* 字体 */
+  --el-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+
+  /* 文字色阶 */
+  --el-text-color-primary: #1f2937;
+  --el-text-color-regular: #4b5563;
+  --el-text-color-secondary: #6b7280;
+  --el-text-color-placeholder: #9ca3af;
+
+  /* 边框/背景 */
+  --el-border-color: #ebe9f5;
+  --el-border-color-light: #eef0f4;
+  --el-border-color-lighter: #f3f4f7;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f7f8fa;
+  --el-fill-color-light: #f5f6fa;
+
+  /* 圆角 */
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 20px;
+  --el-card-border-radius: 12px;
+  --el-card-padding: 20px;
+
+  /* 阴影 */
+  --el-box-shadow: 0 4px 12px rgba(17, 24, 39, 0.06);
+  --el-box-shadow-light: 0 1px 2px rgba(17, 24, 39, 0.04);
+  --cf-shadow-card: 0 1px 3px rgba(17, 24, 39, 0.05), 0 1px 2px rgba(17, 24, 39, 0.03);
+  --cf-shadow-primary: 0 2px 8px rgba(99, 102, 241, 0.28);
+}
+
+/* ---------- 全局排版 ---------- */
+body {
+  font-family: var(--el-font-family);
+  color: var(--el-text-color-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h2 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- 卡片：精致双层阴影 ---------- */
+.el-card {
+  --el-card-border-radius: 12px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: var(--el-card-border-radius);
+  box-shadow: var(--cf-shadow-card);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.el-card__header {
+  padding: 14px 20px;
+  font-weight: 600;
+  font-size: 15px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+/* ---------- 表格 ---------- */
+.el-table {
+  --el-table-border-color: var(--el-border-color-lighter);
+  --el-table-header-bg-color: #fafafb;
+  --el-table-header-text-color: #6b7280;
+  --el-table-row-hover-bg-color: #f5f6ff;
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+}
+
+/* ---------- 按钮：主按钮渐变 + 主色阴影 ---------- */
+.el-button {
+  border-radius: var(--el-border-radius-base);
+  font-weight: 500;
+}
+.el-button--primary {
+  border-color: transparent;
+  background: var(--cf-gradient-brand);
+  box-shadow: var(--cf-shadow-primary);
+}
+.el-button--primary:hover {
+  background: var(--cf-gradient-brand-deep);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.38);
+}
+.el-button--primary:active {
+  background: linear-gradient(135deg, #4f4ec6 0%, #6f70ef 100%);
+}
+.el-button--primary.is-disabled,
+.el-button--primary.is-loading {
+  background: var(--cf-gradient-brand);
+  opacity: 0.55;
+}
+
+/* ---------- 输入/选择 ---------- */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--el-border-radius-base);
+}
+
+/* ---------- 标签 ---------- */
+.el-tag {
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* ---------- inline 表单里的 select 默认过窄 ---------- */
+.el-form--inline .el-select {
+  width: 240px;
+}
+
+/* ============================================================
+ * 侧栏菜单：深色靛蓝底 + 主色高亮块
+ * ========================================================= */
+.cf-sidebar .el-menu {
+  background: transparent;
+  border-right: none;
+}
+.cf-sidebar .el-menu-item {
+  height: 42px;
+  line-height: 42px;
+  margin: 3px 10px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.62);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.cf-sidebar .el-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+.cf-sidebar .el-menu-item.is-active {
+  background: rgba(99, 102, 241, 0.32);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 #a4a6f7;
+}
+.cf-sidebar .el-menu-item.is-active .el-icon {
+  color: #c7c8fa;
+}
+.cf-sidebar .el-menu--collapse .el-menu-item {
+  margin: 3px 4px;
+}

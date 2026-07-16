@@ -98,7 +98,11 @@ onMounted(fetchList)
           <el-tag :type="visType(row.visibility)">{{ row.visibility }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="owner_id" label="Owner" width="80" />
+      <el-table-column label="所有者" width="100">
+        <template #default="{ row }">
+          {{ row.owner_name || `#${row.owner_id}` }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="160" align="center">
         <template #default="{ row }">
           <el-button text @click="openEdit(row)">编辑</el-button>

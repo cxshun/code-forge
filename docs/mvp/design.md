@@ -612,12 +612,13 @@ WS-Frontend 挂载 python-test Skill
 - **规则**：1 个 Session 严格对应 1 个 Run；用户每次发消息触发的新 Agent Loop 都是新 Session + 新 Run
 - **不做的事**：
   - 不做会话内多 Run（一个 Session 跑多个并行 Run）
-  - 不做多 Session 共享上下文窗口
+  - 不做"续跑"——不恢复前序 session 的工具中间态 / 不共享活跃上下文窗口
+- **跨 session 对话历史加载**（D40）：新 Run 启动时从该 chat 最近一次已完成 session 的 JSONL 加载对话历史（仅 user/assistant 文本，过滤 tool_result 与 tool_calls），拼接到当前 user message 之前；让 Agent 具备上一轮对话的短期记忆
 - **Memory 跨 Session 持久**：Run 结束后 Session 历史落盘（JSONL），Memory 文件持续生效；下次同 FeishuChat 触发新 Run 时自动加载
 - **理由**：
   - 实现最简单，避免上下文窗口管理与并发 Run 的耦合
   - 多并行 Run（如多 FeishuChat 同时触发）= 多个独立 Session，互不干扰
-  - 跨 Run 的"记忆"由 Memory 系统承担，而非共享上下文窗口
+  - 跨 Run 的长期记忆由 Memory 系统承担；短期对话连续性由 D40 历史加载承担
 
 ### D24: AGENT.md = 项目级指令文件（WS 级 + Repo 级）
 
@@ -975,12 +976,41 @@ WS-Frontend 挂载 python-test Skill
 
 **不做（对齐 D23 / spec §5.3）**：
 
-- **不恢复**被引用消息所属 session 的历史 JSONL、不"续跑"——本次 Run 仍是独立新 Session / 新 Run
+- **不恢复**被引用消息所属 session 的完整上下文（含工具中间态）、不"续跑"——本次 Run 仍是独立新 Session / 新 Run
 - 跨 session 的关键上下文由 Memory 系统承担，引用回复不负责恢复工具中间态
+- 注：D40 历史加载仍会加载该 chat 最近一次已完成 session 的文本历史（与是否引用回复无关），但仅限 user/assistant 文本，不含工具状态
 
 **去重**：引用回复产生的 Run 仍以本次 `message_id` 为幂等键（D38），与被引用的 parent `message_id` 无关
 
 **理由**：实现最简单，与 1 Session:1 Run（D23）严格一致；覆盖绝大多数"引用追问"场景；恢复完整 session 上下文会违背 spec §5.3 的 MVP 边界，且复杂度 / 成本失控
+
+### D40: 跨 session 对话历史加载
+
+**背景**：D23 设计 1 Session : 1 Run，每条消息独立 Session。但飞书会话场景中用户天然期望 Agent "记得上一轮说了什么"——仅靠 Memory 系统（D18/D22）覆盖长期偏好/决策，不足以支撑连续对话中的上下文引用（如"刚才那个文件帮我改下"）。
+
+**方案**：
+
+- `_execute_run` 构建 `RunContext` 前，调用 `load_chat_history(ws_id, feishu_chat_id, current_session_id)`：
+  - 查询 DB：该 chat 最近一个 `status=completed` 的 Session（排除当前 session）
+  - 读取其 JSONL 文件，解析为 `Message` 列表
+  - **过滤**：丢弃 `tool_result` 消息，剥离 assistant 的 `tool_calls`（跨 session 无用且可能触发 Provider 配对校验错误）
+  - **截断**：取最后 `chat_history_max_messages` 条（默认 20，可配置）
+  - 拼接到当前 user message 之前，作为 `ctx.messages` 的前缀
+- 加载失败不阻断 Run（best-effort：异常时 log warning 并返回空列表）
+
+**与 D23 的关系**：
+
+- 不违反"1 Session : 1 Run"——每次消息仍是新 Session + 新 Run
+- 不做"续跑"（不恢复工具中间态、不共享活跃上下文窗口）——仅加载上一轮的 user/assistant 文本作为历史上下文
+- 与 spec §5.3 排除的"自动跨 session 续跑"不同：续跑 = 恢复完整 session 上下文含工具状态；历史加载 = 只读上一轮对话文本
+
+**与 Memory 的分工**：
+
+- D40 覆盖短期对话连续性（上一轮说了什么，默认 20 条，随 session 结束自动失效）
+- Memory（D18/D22）覆盖长期记忆（用户偏好、技术决策、项目约定，跨 session 持久）
+- 两者互补：D40 解决"接得上话"，Memory 解决"记得住事"
+
+**配置**：`chat_history_max_messages`（`app/config.py`，默认 20）
 
 ---
 

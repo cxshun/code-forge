@@ -42,10 +42,10 @@ async function handleLogout() {
 
 <template>
   <el-container class="main-layout">
-    <el-aside :width="isCollapse ? '64px' : '200px'" class="sidebar">
+    <el-aside :width="isCollapse ? '64px' : '220px'" class="sidebar cf-sidebar">
       <div class="logo">
-        <span v-if="!isCollapse">Code Forge</span>
-        <span v-else>CF</span>
+        <span class="logo-badge">CF</span>
+        <span v-if="!isCollapse" class="logo-text">Code Forge</span>
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -73,6 +73,7 @@ async function handleLogout() {
         </div>
         <div class="header-right">
           <span class="user-info">
+            <span class="avatar">{{ (userStore.user?.username || '?').slice(0, 1).toUpperCase() }}</span>
             {{ userStore.user?.username }}
             <el-tag size="small" :type="isAdmin ? 'danger' : 'info'">
               {{ isAdmin ? '管理员' : '用户' }}
@@ -95,9 +96,8 @@ async function handleLogout() {
 }
 
 .sidebar {
-  background-color: var(--el-menu-bg-color);
-  border-right: solid 1px var(--el-border-color);
-  transition: width 0.3s;
+  background: var(--cf-sidebar-gradient);
+  transition: width 0.25s ease;
   overflow: hidden;
 }
 
@@ -106,22 +106,46 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  font-weight: bold;
-  color: var(--el-color-primary);
-  border-bottom: solid 1px var(--el-border-color);
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.logo-badge {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--cf-gradient-brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.45);
+}
+.logo-text {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #ffffff;
 }
 
 .sidebar-menu {
+  padding-top: 8px;
   border-right: none;
+  background: transparent;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: solid 1px var(--el-border-color);
-  background: var(--el-bg-color);
+  background: #ffffff;
+  border-bottom: solid 1px var(--el-border-color-light);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.03);
+  position: relative;
+  z-index: 10;
 }
 
 .header-left {
@@ -132,6 +156,11 @@ async function handleLogout() {
 .collapse-btn {
   font-size: 20px;
   cursor: pointer;
+  color: var(--el-text-color-secondary);
+  transition: color 0.18s ease;
+}
+.collapse-btn:hover {
+  color: var(--el-color-primary);
 }
 
 .header-right {
@@ -145,10 +174,25 @@ async function handleLogout() {
   align-items: center;
   gap: 8px;
   font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--cf-gradient-brand);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
 }
 
 .main-content {
-  background-color: var(--el-bg-color-page);
-  padding: 20px;
+  background: linear-gradient(180deg, #f7f8fa 0%, #f4f3fb 100%);
+  padding: 24px;
 }
 </style>

@@ -63,6 +63,7 @@ class WorkspaceOut(BaseModel):
     id: int
     name: str
     owner_id: int
+    owner_name: str = ""
     context_config: dict | None
     cwd_repo_id: int | None
 
@@ -140,6 +141,7 @@ class McpOut(BaseModel):
     type: str
     config: dict
     owner_id: int
+    owner_name: str = ""
     visibility: str
     read_only: bool
 
@@ -161,6 +163,7 @@ class FeishuAppOut(BaseModel):
     app_secret_masked: str
     name: str
     owner_id: int
+    owner_name: str = ""
     connection_status: str
 
 
@@ -190,6 +193,7 @@ class SkillOut(BaseModel):
     name: str
     description: str
     owner_id: int
+    owner_name: str = ""
     visibility: str
     dir_path: str
 
@@ -205,6 +209,8 @@ class RunOut(BaseModel):
     feishu_chat_id: int
     status: str
     trigger_message_id: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
     error: str | None = None
 
 

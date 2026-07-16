@@ -44,11 +44,12 @@ from app.workspace.fs import create_workspace_skeleton, workspace_root
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
-def _ws_out(ws: Workspace) -> WorkspaceOut:
+def _ws_out(ws: Workspace, owner_name: str = "") -> WorkspaceOut:
     return WorkspaceOut(
         id=ws.id,
         name=ws.name,
         owner_id=ws.owner_id,
+        owner_name=owner_name or "",
         context_config=ws.context_config,
         cwd_repo_id=ws.cwd_repo_id,
     )
@@ -67,7 +68,7 @@ async def list_workspaces(
         )
     ).all()
     return {
-        "items": [_ws_out(w) for w in wss],
+        "items": [_ws_out(w, owner_name=user.username) for w in wss],
         "total": len(wss),
     }
 
@@ -86,7 +87,7 @@ async def create_workspace(
     await db.refresh(ws)
     # 建物理目录骨架（repos / chats / logs）
     create_workspace_skeleton(ws.id)
-    return _ws_out(ws)
+    return _ws_out(ws, owner_name=user.username)
 
 
 @router.get("/{ws_id}")
@@ -94,6 +95,8 @@ async def get_workspace(
     ws: Workspace = Depends(require_ws_owner),
     db: AsyncSession = Depends(get_db),
 ):
+    owner: User | None = await db.get(User, ws.owner_id)
+    owner_name = owner.username if owner else ""
     repos = (
         await db.scalars(select(GitRepo).where(GitRepo.workspace_id == ws.id))
     ).all()
@@ -115,7 +118,7 @@ async def get_workspace(
         )
     ).all()
     return WorkspaceDetail(
-        **_ws_out(ws).model_dump(),
+        **_ws_out(ws, owner_name=owner_name).model_dump(),
         repos=[RepoBrief(id=r.id, url=r.url, clone_status=r.clone_status) for r in repos],
         chats=[ChatBrief(id=c.id, app_id=c.app_id, chat_name=c.chat_name) for c in chats],
         skills=[SkillBrief(id=s.id, name=s.name, description=s.description) for s in skills],
@@ -128,6 +131,7 @@ async def patch_workspace(
     body: WorkspacePatchIn,
     ws: Workspace = Depends(require_ws_owner),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_user),
 ):
     if body.name is not None:
         ws.name = body.name
@@ -135,7 +139,7 @@ async def patch_workspace(
         ws.context_config = body.context_config
     await db.commit()
     await db.refresh(ws)
-    return _ws_out(ws)
+    return _ws_out(ws, owner_name=user.username)
 
 
 async def _cascade_delete(ws_id: int) -> dict:

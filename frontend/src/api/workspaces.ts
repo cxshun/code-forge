@@ -96,6 +96,9 @@ export const workspacesApi = {
   listRuns(wsId: number, params?: { chat_id?: number; status?: string }) {
     return http.get<unknown, ListResult<RunOut>>(`${BASE}/${wsId}/runs`, { params })
   },
+  getRunMessages(wsId: number, runId: number) {
+    return http.get<unknown, { messages: Array<{ role: string; content: string | null; reasoning?: string | null; tool_calls?: unknown[] | null }> }>(`${BASE}/${wsId}/runs/${runId}/messages`)
+  },
   cancelRun(wsId: number, runId: number) {
     return http.post<unknown, void>(`${BASE}/${wsId}/runs/${runId}:cancel`)
   },

@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -68,9 +69,27 @@ class Settings(BaseSettings):
     payload_ttl_days: int = 7
     max_runs_per_chat: int = 500
 
+    # 跨 session 历史加载：新 Run 启动时从最近一次已完成 session 加载多少条消息
+    chat_history_max_messages: int = 20
+
     @property
     def is_prod(self) -> bool:
         return self.app_env == "prod"
+
+    @property
+    def is_test(self) -> bool:
+        return self.app_env == "test"
+
+    @property
+    def pg_dsn_effective(self) -> str:
+        """实际 DSN：test 环境强制切到 ``codeforge_test`` 库，避免污染 dev/prod。
+
+        测试 fixture 的 ``reset_all()`` 会全表 TRUNCATE，必须隔离到独立测试库。
+        """
+        url = make_url(self.pg_dsn)
+        if self.is_test:
+            url = url.set(database="codeforge_test")
+        return str(url)
 
     @property
     def workspaces_root(self) -> str:

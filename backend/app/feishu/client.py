@@ -10,13 +10,17 @@ import json
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
+    CreateMessageReactionRequest,
+    CreateMessageReactionRequestBody,
     CreateMessageRequest,
     CreateMessageRequestBody,
+    DeleteMessageReactionRequest,
     GetChatRequest,
     GetMessageRequest,
     PatchMessageRequest,
     PatchMessageRequestBody,
 )
+from lark_oapi.api.im.v1.model.emoji import Emoji
 
 
 class FeishuAPIError(Exception):
@@ -104,3 +108,35 @@ class FeishuClient:
         if not resp.success():
             return None
         return resp.data
+
+    async def add_reaction(self, message_id: str, emoji_type: str = "OnIt") -> str:
+        """在消息上添加表情，返回 reaction_id。"""
+        body = (
+            CreateMessageReactionRequestBody.builder()
+            .reaction_type(Emoji.builder().emoji_type(emoji_type).build())
+            .build()
+        )
+        req = (
+            CreateMessageReactionRequest.builder()
+            .message_id(message_id)
+            .request_body(body)
+            .build()
+        )
+        resp = await asyncio.to_thread(
+            self._client.im.v1.message_reaction.create, req
+        )
+        _check(resp)
+        return resp.data.reaction_id
+
+    async def delete_reaction(self, message_id: str, reaction_id: str) -> None:
+        """移除消息上的表情。"""
+        req = (
+            DeleteMessageReactionRequest.builder()
+            .message_id(message_id)
+            .reaction_id(reaction_id)
+            .build()
+        )
+        resp = await asyncio.to_thread(
+            self._client.im.v1.message_reaction.delete, req
+        )
+        _check(resp)

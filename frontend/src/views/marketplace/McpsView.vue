@@ -132,6 +132,15 @@ function visType(vis: string) {
   return vis === 'public' ? 'success' : 'info'
 }
 
+function mcpEndpoint(mcp: McpOut): string {
+  const cfg = mcp.config as Record<string, any>
+  if (mcp.type === 'stdio') {
+    const args = Array.isArray(cfg.args) ? (cfg.args as string[]).join(' ') : ''
+    return args ? `${cfg.command || ''} ${args}` : (cfg.command || '')
+  }
+  return cfg.endpoint || ''
+}
+
 onMounted(fetchList)
 </script>
 
@@ -144,31 +153,39 @@ onMounted(fetchList)
       </el-button>
     </div>
 
-    <el-table :data="mcps" v-loading="loading">
-      <el-table-column prop="name" label="名称" width="180" />
-      <el-table-column label="类型" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag>{{ row.type }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="可见性" width="100" align="center">
-        <template #default="{ row }">
-          <el-tag :type="visType(row.visibility)">{{ row.visibility }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="owner_id" label="Owner" width="80" />
-      <el-table-column label="只读" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.read_only ? 'warning' : 'info'" size="small">{{ row.read_only ? '是' : '否' }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="160" align="center">
-        <template #default="{ row }">
-          <el-button text @click="openEdit(row)">编辑</el-button>
-          <el-button text type="danger" @click="onDelete(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <el-row :gutter="16" v-loading="loading">
+      <el-col
+        v-for="mcp in mcps"
+        :key="mcp.id"
+        :xs="24"
+        :sm="12"
+        :md="8"
+        :lg="6"
+        class="mcp-col"
+      >
+        <el-card shadow="hover" class="mcp-card">
+          <div class="mcp-head">
+            <span class="mcp-name" :title="mcp.name">{{ mcp.name }}</span>
+            <el-tag size="small">{{ mcp.type }}</el-tag>
+          </div>
+          <div class="mcp-endpoint" :title="mcpEndpoint(mcp)">{{ mcpEndpoint(mcp) || '—' }}</div>
+          <div class="mcp-tags">
+            <el-tag :type="visType(mcp.visibility)" size="small">{{ mcp.visibility }}</el-tag>
+            <el-tag :type="mcp.read_only ? 'warning' : 'info'" size="small">
+              {{ mcp.read_only ? '只读' : '可写' }}
+            </el-tag>
+          </div>
+          <div class="mcp-foot">
+            <span class="mcp-owner">{{ mcp.owner_name || `#${mcp.owner_id}` }}</span>
+            <div>
+              <el-button text size="small" @click="openEdit(mcp)">编辑</el-button>
+              <el-button text size="small" type="danger" @click="onDelete(mcp)">删除</el-button>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+    <el-empty v-if="!loading && !mcps.length" description="暂无 MCP，点击右上角注册" />
 
     <el-dialog v-model="createDialogVisible" title="注册 MCP" width="560">
       <el-form label-width="80px">
@@ -248,5 +265,50 @@ onMounted(fetchList)
 }
 .page-header h2 {
   margin: 0;
+}
+
+.mcp-col {
+  margin-bottom: 16px;
+}
+.mcp-card {
+  height: 100%;
+}
+.mcp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.mcp-name {
+  font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-endpoint {
+  margin: 10px 0;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mcp-tags {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.mcp-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding-top: 8px;
+}
+.mcp-owner {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

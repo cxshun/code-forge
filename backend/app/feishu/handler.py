@@ -5,8 +5,8 @@
 
 卡片生命周期由 Run 回调拥有（接入层不再预发 Thinking 卡片）：
 - ``on_queue`` → 排队卡片；``on_start`` → 思考中卡片
-- ``on_text`` → ``ProgressThrottler`` 节流更新卡片（流式回复，F3.1.4 / F3.1.9）
-- ``on_done`` → 成功 flush 最终正文 / 失败展示中断 / 取消 / 错误
+- ``on_text`` → 仅累积文本，不更新卡片（避免流式分片导致表格 / 格式解析异常）
+- ``on_done`` → 一次性渲染完整正文（含 GFM 表格等完整结构） / 失败展示中断 / 取消 / 错误
 """
 
 import logging
@@ -26,7 +26,6 @@ from app.core.redis_client import redis as redis_client
 from app.db.models import Workspace
 from app.db.session import async_session_factory
 from app.feishu.cards import (
-    ProgressThrottler,
     build_progress_card,
     build_queue_card,
 )
@@ -41,14 +40,13 @@ _CARD_TEXT_CAP = 6000  # 卡片单次展示文本上限（防超长回复触发�
 
 
 class FeishuRunCallbacks:
-    """把 Run 事件桥接到飞书卡片（流式节流更新）。"""
+    """把 Run 事件桥接到飞书卡片（非流式：完成后一次性渲染）。"""
 
     def __init__(self, client: FeishuClient, chat_id: str, footer: str | None) -> None:
         self._client = client
         self._chat_id = chat_id
         self._footer = footer
         self._card_id: str | None = None
-        self._throttler = ProgressThrottler()
         self._full: list[str] = []
 
     async def _send(self, card: dict) -> None:
@@ -75,14 +73,10 @@ class FeishuRunCallbacks:
 
     async def on_text(self, delta: str) -> None:
         self._full.append(delta)
-        self._throttler.append(delta)
-        if self._throttler.should_flush():
-            self._throttler.flush()
-            await self._update("".join(self._full))
 
     async def on_tool_call(self, _tc: dict) -> None:
-        # MVP 不为单次工具调用发卡（避免刷屏）；保留钩子供后续扩展
-        pass
+        # 工具调用意味着当前文本是中间过程（非最终回复），清空累积
+        self._full.clear()
 
     async def on_done(self, exc: Exception | None) -> None:
         if exc is not None:
@@ -97,9 +91,7 @@ class FeishuRunCallbacks:
             else:
                 await self._send(build_progress_card(msg, footer=self._footer))
             return
-        # 成功：flush 剩余 + 最终正文
-        if self._throttler.has_pending:
-            self._throttler.flush()
+        # 成功：一次性渲染完整正文（含表格等完整结构）
         full = "".join(self._full)
         if full:
             await self._update(full)
@@ -141,16 +133,36 @@ async def handle_message(
     client = FeishuClient(app_id, app_secret)
     footer = f"sender {ctx.sender_open_id[-8:]}" if ctx.sender_open_id else None
 
-    # 未配置 LLM key → 发错误卡，不入队
-    if not settings.anthropic_api_key:
-        log.warning("anthropic_api_key 未设置，跳过 Run: %s", ctx.message_id)
+    # 收到确认：在用户消息上打「OnIt」表情（处理完成后移除）
+    reaction_id = None
+    try:
+        reaction_id = await client.add_reaction(ctx.message_id, "OnIt")
+    except Exception:
+        log.warning("add_reaction failed: %s", ctx.message_id, exc_info=True)
+
+    # 未配置任何 LLM Provider → 发错误卡，不入队
+    has_llm = bool(settings.anthropic_api_key) or (
+        settings.openai_compatible_api_key
+        and settings.openai_compatible_base_url
+        and settings.openai_compatible_model
+    )
+    if not has_llm:
+        log.warning("未配置任何 LLM Provider，跳过 Run: %s", ctx.message_id)
         try:
             await client.send_card(
                 ctx.chat_id,
-                build_progress_card("❌ 未配置 Anthropic API Key", footer=footer),
+                build_progress_card(
+                    "❌ 未配置 LLM Provider（ANTHROPIC_API_KEY 或 OPENAI_COMPATIBLE_*）",
+                    footer=footer,
+                ),
             )
         except Exception:
             log.exception("error card failed")
+        if reaction_id:
+            try:
+                await client.delete_reaction(ctx.message_id, reaction_id)
+            except Exception:
+                log.warning("delete_reaction failed: %s", ctx.message_id, exc_info=True)
         return
 
     # D39 引用回复注入（parent_id → 拉被引用正文前置为引用块）
@@ -177,6 +189,14 @@ async def handle_message(
             log.exception("mcp cleanup failed")
         await orig_on_done(exc)
 
+    async def _on_done_with_reaction(exc: Exception | None) -> None:
+        await _on_done_with_cleanup(exc)
+        if reaction_id:
+            try:
+                await client.delete_reaction(ctx.message_id, reaction_id)
+            except Exception:
+                log.warning("delete_reaction failed: %s", ctx.message_id, exc_info=True)
+
     run_id = await run_queue.submit(
         ws_id=ws_id,
         feishu_chat_id=feishu_chat_id,
@@ -191,7 +211,7 @@ async def handle_message(
         on_tool_call=callbacks.on_tool_call,
         on_queue=callbacks.on_queue,
         on_start=callbacks.on_start,
-        on_done=_on_done_with_cleanup,
+        on_done=_on_done_with_reaction,
     )
     log.info(
         "submitted run %d: app=%s chat=%s ws=%s text=%r quote=%s",

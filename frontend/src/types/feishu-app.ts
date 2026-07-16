@@ -4,6 +4,7 @@ export interface FeishuAppOut {
   app_secret_masked: string
   name: string
   owner_id: number
+  owner_name?: string
   connection_status: string
 }
 

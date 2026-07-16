@@ -14,6 +14,7 @@ import threading
 from collections.abc import Awaitable, Callable
 
 import lark_oapi as lark
+import lark_oapi.ws.client as lark_ws_mod
 from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 
 log = logging.getLogger("feishu.ws_pool")
@@ -93,7 +94,24 @@ class WsPool:
             log_level=lark.LogLevel.INFO,
             auto_reconnect=True,
         )
-        t = threading.Thread(target=client.start, daemon=True, name=f"feishu-ws-{app_id}")
+
+        def _run() -> None:
+            # lark ws.Client.start() 用模块级 ``loop``（import 时在主线程取的 uvicorn uvloop，
+            # 正在 running），子线程直接 run_until_complete 会撞 "this event loop is already
+            # running"。这里建独立 loop 并替换该模块级变量，让 start 跑在本线程 loop 上。
+            # NOTE：多 App 多线程共享 lark 模块级 loop，断连 _reconnect 读该变量存在竞态
+            # （当前单 App 无碍；多 App 需后续改为每 App 独立进程或串行连接管理）。
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            lark_ws_mod.loop = new_loop
+            try:
+                client.start()
+            except Exception:
+                log.exception("feishu.ws.start_crashed", app_id=app_id)
+            finally:
+                new_loop.close()
+
+        t = threading.Thread(target=_run, daemon=True, name=f"feishu-ws-{app_id}")
         t.start()
         self._clients[app_id] = client
         self._threads[app_id] = t

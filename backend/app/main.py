@@ -41,6 +41,13 @@ from app.observability.buffer import span_buffer
 from app.observability.monitor import monitor_loop
 from app.observability.ttl import ttl_loop
 from app.tasks.runner import task_runner
+from sqlalchemy import select
+
+from app.core.security import decrypt_secret
+from app.db.models import FeishuApp
+from app.db.session import async_session_factory
+from app.feishu.handler import handle_message
+from app.feishu.ws_pool import ws_pool
 
 # 模块导入即配置日志，确保任何入口（含测试）拿到结构化 logger。
 configure_logging()
@@ -61,13 +68,30 @@ async def lifespan(app: FastAPI):
     # TTL 清理循环（§7.8 / T10.4）
     ttl_task = asyncio.create_task(ttl_loop())
     # TODO(NF4.4.4 / D36)：进一步清理孤儿 Run（标 interrupted）、强制释放残留 WS 锁。
-    # TODO(D7 / T4.2)：为每个已注册飞书 App 启动独立 WebSocket 长连接。
+
+    # 飞书多 App WebSocket 连接池（D7 / T4.2）：绑定 handler，启动恢复已注册 App。
+    # TODO：connection_status 精确回写（lark ws.Client 无 on_connected 回调，当前仅 connecting）。
+    ws_pool.start(handle_message)
+    recovered = 0
+    async with async_session_factory() as db:
+        apps = (await db.scalars(select(FeishuApp))).all()
+        for a in apps:
+            try:
+                ws_pool.add_app(a.app_id, decrypt_secret(a.app_secret_enc))
+                a.connection_status = "connecting"
+                recovered += 1
+            except Exception:
+                log.exception("feishu.ws.recover_failed", app_id=a.app_id)
+        await db.commit()
+    log.info("feishu.ws.recovered", count=recovered, total=len(apps))
+
     yield
+
     log.info("app.stopping")
     monitor_task.cancel()
     ttl_task.cancel()
     await span_buffer.stop()
-    # TODO(T4.2)：优雅关闭飞书 WS 连接池。
+    ws_pool.stop()
 
 
 app = FastAPI(

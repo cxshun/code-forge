@@ -19,13 +19,14 @@ from app.db.session import get_db
 router = APIRouter(prefix="/mcps", tags=["mcps"])
 
 
-def _mcp_out(m: MCP) -> McpOut:
+def _mcp_out(m: MCP, owner_name: str = "") -> McpOut:
     return McpOut(
         id=m.id,
         name=m.name,
         type=m.type,
         config=mask_secrets(m.config),
         owner_id=m.owner_id,
+        owner_name=owner_name or "",
         visibility=m.visibility,
         read_only=m.read_only,
     )
@@ -44,7 +45,18 @@ async def list_mcps(
             .order_by(MCP.id)
         )
     ).all()
-    return {"items": [_mcp_out(m) for m in mcps], "total": len(mcps)}
+    # 批量解析 owner 名称
+    owner_ids = {m.owner_id for m in mcps}
+    owner_map: dict[int, str] = {}
+    if owner_ids:
+        users = (
+            await db.scalars(select(User).where(User.id.in_(owner_ids)))
+        ).all()
+        owner_map = {u.id: u.username for u in users}
+    return {
+        "items": [_mcp_out(m, owner_name=owner_map.get(m.owner_id, "")) for m in mcps],
+        "total": len(mcps),
+    }
 
 
 @router.post("", status_code=201)
@@ -64,7 +76,7 @@ async def create_mcp(
     db.add(m)
     await db.commit()
     await db.refresh(m)
-    return _mcp_out(m)
+    return _mcp_out(m, owner_name=user.username)
 
 
 @router.get("/{mcp_id}")
@@ -78,7 +90,8 @@ async def get_mcp(
         raise api_error(404, "MCP 不存在")
     if m.owner_id != user.id and m.visibility != "public":
         raise api_error(404, "MCP 不存在")
-    return _mcp_out(m)
+    owner = await db.get(User, m.owner_id)
+    return _mcp_out(m, owner_name=owner.username if owner else "")
 
 
 @router.patch("/{mcp_id}")
@@ -102,7 +115,8 @@ async def patch_mcp(
         m.read_only = body.read_only
     await db.commit()
     await db.refresh(m)
-    return _mcp_out(m)
+    owner = await db.get(User, m.owner_id)
+    return _mcp_out(m, owner_name=owner.username if owner else "")
 
 
 @router.delete("/{mcp_id}", status_code=204)

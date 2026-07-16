@@ -20,6 +20,8 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.agent.context import ContextManager
 from app.agent.lock import WsLock
 from app.agent.loop import RunContext, run_loop
@@ -52,13 +54,68 @@ def save_session_jsonl(
     f = d / f"{session_id}.jsonl"
     with f.open("w", encoding="utf-8") as fh:
         for m in messages:
-            fh.write(
-                json.dumps(
-                    {"role": m.role, "content": m.content}, ensure_ascii=False
-                )
-                + "\n"
-            )
+            row: dict = {"role": m.role, "content": m.content, "created_at": m.created_at}
+            # assistant 携带模型思考（reasoning）与工具调用（tool_calls），
+            # 供会话历史 / Trace 可观测展示（deepseek-v4-flash 等 thinking 模型）
+            if m.role == "assistant":
+                if m.reasoning:
+                    row["reasoning"] = m.reasoning
+                if m.tool_calls:
+                    row["tool_calls"] = m.tool_calls
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return f
+
+
+async def load_chat_history(
+    ws_id: int, feishu_chat_id: int, current_session_id: int
+) -> list[Message]:
+    """加载该 chat 最近一次已完成 session 的消息历史（跨 session 上下文）。
+
+    从 JSONL 读取，过滤 tool_result 与 tool_calls（跨 session 无用且可能触发
+    Provider 配对校验错误），取最近 N 条（``chat_history_max_messages``）。
+    """
+    try:
+        async with async_session_factory() as db:
+            stmt = (
+                select(Session.id)
+                .join(Run, Run.session_id == Session.id)
+                .where(
+                    Session.feishu_chat_id == feishu_chat_id,
+                    Session.id != current_session_id,
+                    Run.status == RunStatus.completed.value,
+                )
+                .order_by(Session.id.desc())
+                .limit(1)
+            )
+            prev_sid = await db.scalar(stmt)
+        if prev_sid is None:
+            return []
+        f = _sessions_dir(ws_id, feishu_chat_id) / f"{prev_sid}.jsonl"
+        if not f.exists():
+            return []
+        messages: list[Message] = []
+        with f.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("role") == "tool_result":
+                    continue
+                content = row.get("content")
+                if not content:
+                    continue
+                messages.append(Message(role=row["role"], content=content))
+        limit = settings.chat_history_max_messages
+        if len(messages) > limit:
+            messages = messages[-limit:]
+        return messages
+    except Exception:
+        log.warning(
+            "load_chat_history failed: ws=%s chat=%s", ws_id, feishu_chat_id,
+            exc_info=True,
+        )
+        return []
 
 
 async def _set_run_status(
@@ -142,9 +199,10 @@ async def _execute_run(
                 skill_descriptions,
                 feishu_chat_id=feishu_chat_id,
             )
+            history = await load_chat_history(ws_id, feishu_chat_id, session_id)
             ctx = RunContext(
                 system=system,
-                messages=[Message(role="user", content=user_message)],
+                messages=history + [Message(role="user", content=user_message)],
                 tool_ctx=ToolContext(
                     ws_id=ws_id,
                     workspaces_root=settings.workspaces_root,
@@ -230,4 +288,4 @@ async def start_run(
         await lock.release()
 
 
-__all__ = ["_create_run", "_execute_run", "save_session_jsonl", "start_run"]
+__all__ = ["_create_run", "_execute_run", "load_chat_history", "save_session_jsonl", "start_run"]

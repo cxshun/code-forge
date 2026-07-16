@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 log = logging.getLogger("tools.mcp.client")
 
@@ -92,7 +93,14 @@ class McpClient:
             read, write = await transport_cm.enter_async_context(stdio_client(params))
         elif self._type == "http":
             endpoint = self._config["endpoint"]
-            read, write = await transport_cm.enter_async_context(sse_client(endpoint))
+            # observability-mcp 等 /streamhttp、/mcp 端点是 Streamable HTTP（新规范，非旧 SSE）。
+            # config 可显式 "transport": "sse" 走旧 SSE，默认 streamable。
+            if self._config.get("transport") == "sse":
+                read, write = await transport_cm.enter_async_context(sse_client(endpoint))
+            else:
+                read, write, _ = await transport_cm.enter_async_context(
+                    streamablehttp_client(endpoint)
+                )
         else:
             raise ValueError(f"unsupported MCP type: {self._type}")
 

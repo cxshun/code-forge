@@ -79,10 +79,12 @@ async def _stream_round(
             if evt.type == "text" and evt.text:
                 assistant.content = (assistant.content or "") + evt.text
                 await _maybe_call(on_text, evt.text)
+            elif evt.type == "reasoning" and evt.reasoning:
+                assistant.reasoning = (assistant.reasoning or "") + evt.reasoning
             elif evt.type == "tool_use_start" and evt.tool_name:
                 tool_calls.append(
                     {
-                        "id": "",
+                        "id": f"call_{len(tool_calls)}",
                         "name": evt.tool_name,
                         "input": evt.tool_input or "{}",
                     }
@@ -110,6 +112,10 @@ async def _stream_round(
             sctx.cache_creation_input_tokens,
         )
 
+    # assistant 消息需携带 tool_calls，否则下一轮 _to_openai_messages 生成的
+    # messages 里 tool(role) 前面没有 assistant(tool_calls)，OpenAI 兼容端点（如
+    # deepseek）严格校验会 400。同时 tool_call_id 要与后续 tool_result 配对。
+    assistant.tool_calls = tool_calls or None
     await _maybe_call(on_usage, usage)
     return assistant, tool_calls, usage
 

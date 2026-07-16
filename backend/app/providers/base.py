@@ -10,7 +10,8 @@ Provider 实现不关心推送层，只做 LLM 调用与结果解析。
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -18,8 +19,10 @@ class Message:
     """对话消息，对齐 Anthropic Message 协议的子集。"""
     role: str  # user / assistant / tool_result
     content: str | None = None
+    reasoning: str | None = None  # assistant: 模型思考（deepseek reasoning_content，多轮需回传）
     tool_calls: list[dict] | None = None  # assistant: [{"id","name","input"}]
     tool_call_id: str | None = None  # tool_result: 对应的 tool_use id
+    created_at: str | None = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 @dataclass
@@ -36,12 +39,14 @@ class StreamEvent:
 
     type 取值：
     - ``text``：普通文本片段
+    - ``reasoning``：模型思考片段（deepseek-v4-flash 等 thinking 模型的 reasoning_content）
     - ``tool_use_start``：开始一个工具调用（含 name + JSON input）
     - ``tool_use_end``：工具调用结束
     - ``stop``：流结束（含最终 usage）
     """
     type: str
     text: str | None = None
+    reasoning: str | None = None
     tool_name: str | None = None
     tool_input: str | None = None
     input_tokens: int | None = None

@@ -35,7 +35,18 @@ McpCleanup = Callable[[], Awaitable[None]] | None
 
 
 def make_provider() -> Provider:
-    """构造 LLM Provider（MVP = Anthropic）。key 缺失时 Provider 仍返回，stream 时失败。"""
+    """构造主 LLM Provider。
+
+    - 配了 ``openai_compatible_*`` 三项 → 国内模型（智谱/通义/DeepSeek/Moonshot 等），
+      支持无 Anthropic key 的部署（design D3 多模型备选）。
+    - 否则 → Anthropic（key 缺失时 Provider 仍返回，stream 时失败）。
+    """
+    if (
+        settings.openai_compatible_api_key
+        and settings.openai_compatible_base_url
+        and settings.openai_compatible_model
+    ):
+        return OpenAICompatibleProvider(model=settings.openai_compatible_model)
     return AnthropicProvider()
 
 

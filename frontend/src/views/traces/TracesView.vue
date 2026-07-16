@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { tracesApi } from '@/api/traces'
 import { workspacesApi } from '@/api/workspaces'
 import type { TraceListItem, SpanOut } from '@/types/trace'
@@ -20,6 +21,11 @@ const spansLoading = ref(false)
 const payloadDialog = ref<{ spanId: string; suffix: string } | null>(null)
 const payloadContent = ref('')
 const payloadLoading = ref(false)
+
+// 会话消息对话框
+const msgDialogVisible = ref(false)
+const msgLoading = ref(false)
+const messages = ref<Array<{ role: string; content: string | null; reasoning?: string | null }>>([])
 
 async function onWsChange() {
   if (!selectedWsId.value) return
@@ -56,6 +62,21 @@ async function openTrace(row: TraceListItem) {
     spans.value = res.items
   } finally {
     spansLoading.value = false
+  }
+}
+
+async function viewConversation(runId: number) {
+  if (!selectedWsId.value) return
+  msgDialogVisible.value = true
+  msgLoading.value = true
+  messages.value = []
+  try {
+    const res = await workspacesApi.getRunMessages(selectedWsId.value, runId)
+    messages.value = res.messages
+  } catch {
+    ElMessage.error('加载会话消息失败')
+  } finally {
+    msgLoading.value = false
   }
 }
 
@@ -161,6 +182,21 @@ function fmtTokens(input: number | null, output: number | null): string {
   return `${input ?? 0} / ${output ?? 0}`
 }
 
+function fmtTime(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function roleLabel(role: string) {
+  return { user: '用户', assistant: '助手', tool_result: '工具结果' }[role] || role
+}
+
+function roleColor(role: string) {
+  return { user: 'primary', assistant: 'success', tool_result: 'warning' }[role] || 'info'
+}
+
 onMounted(async () => {
   const { useUserStore } = await import('@/stores/user')
   const store = useUserStore()
@@ -196,26 +232,39 @@ onMounted(async () => {
 
     <el-table :data="traces" v-loading="loading" @row-click="openTrace" highlight-current-row style="margin-bottom: 16px">
       <el-table-column prop="run_id" label="Run ID" width="80" />
-      <el-table-column label="状态" width="100" align="center">
+      <el-table-column label="状态" width="80" align="center">
         <template #default="{ row }">
           <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="耗时" width="100">
+      <el-table-column label="耗时" width="90">
         <template #default="{ row }">{{ fmtDuration(row.duration_ms) }}</template>
       </el-table-column>
-      <el-table-column label="Tokens (in/out)" width="140">
+      <el-table-column label="Tokens (in/out)" width="130">
         <template #default="{ row }">{{ fmtTokens(row.total_input_tokens, row.total_output_tokens) }}</template>
       </el-table-column>
-      <el-table-column label="费用" width="100">
+      <el-table-column label="费用" width="90">
         <template #default="{ row }">{{ fmtCost(row.total_cost_usd) }}</template>
       </el-table-column>
-      <el-table-column prop="span_count" label="Span 数" width="90" />
-      <el-table-column prop="started_at" label="开始时间" min-width="180" />
-      <el-table-column prop="error_type" label="错误类型" min-width="150" show-overflow-tooltip />
+      <el-table-column prop="span_count" label="Span 数" width="80" />
+      <el-table-column label="会话" width="80" align="center">
+        <template #default="{ row }">
+          <el-button size="small" @click.stop="viewConversation(row.run_id)" :disabled="row.status !== 'ok'">查看</el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="开始时间" width="170">
+        <template #default="{ row }">{{ fmtTime(row.started_at) }}</template>
+      </el-table-column>
+      <el-table-column prop="error_type" label="错误类型" min-width="130" show-overflow-tooltip />
     </el-table>
 
     <el-dialog :model-value="!!selectedTrace" @update:model-value="selectedTrace = null" :title="selectedTrace ? `Run #${selectedTrace.run_id} Span 瀑布图` : ''" width="90%" top="5vh" destroy-on-close @close="selectedTrace = null">
+      <template #header="{ titleId, titleClass }">
+        <div style="display: flex; align-items: center; justify-content: space-between">
+          <span :id="titleId" :class="titleClass">{{ selectedTrace ? `Run #${selectedTrace.run_id} Span 瀑布图` : '' }}</span>
+          <el-button size="small" v-if="selectedTrace" @click="viewConversation(selectedTrace.run_id)">查看会话消息</el-button>
+        </div>
+      </template>
       <div v-loading="spansLoading">
         <el-table :data="flatSpans" row-key="span_id" size="small" :max-height="500" v-if="flatSpans.length">
           <el-table-column label="Span" min-width="300">
@@ -267,6 +316,26 @@ onMounted(async () => {
     <el-dialog :model-value="!!payloadDialog" @update:model-value="payloadDialog = null" :title="payloadDialog ? `Payload: ${payloadDialog.spanId.slice(0, 8)}.${payloadDialog.suffix}` : ''" width="70%" destroy-on-close>
       <div v-loading="payloadLoading">
         <el-input v-model="payloadContent" type="textarea" :rows="20" readonly style="font-family: monospace" />
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="msgDialogVisible" title="会话消息（含模型思考内容）" width="80%" top="5vh" destroy-on-close>
+      <div v-loading="msgLoading" style="max-height: 65vh; overflow-y: auto; padding: 8px 0">
+        <div v-for="(msg, i) in messages" :key="i" class="msg-item" style="margin-bottom: 16px; border: 1px solid var(--el-border-color-light); border-radius: 6px; overflow: hidden;">
+          <div class="msg-header" style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--el-fill-color-light); border-bottom: 1px solid var(--el-border-color-light);">
+            <el-tag :type="roleColor(msg.role)" size="small">{{ roleLabel(msg.role) }}</el-tag>
+            <span style="font-size: 12px; color: var(--el-text-color-secondary)">#{{ i + 1 }}</span>
+          </div>
+          <div class="msg-body" style="padding: 12px;">
+            <details v-if="msg.reasoning" style="margin-bottom: 8px; background: var(--el-fill-color-light); padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+              <summary style="cursor: pointer; color: var(--el-text-color-secondary);">💭 模型思考</summary>
+              <pre style="margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.6; color: var(--el-text-color-regular);">{{ msg.reasoning }}</pre>
+            </details>
+            <pre v-if="msg.content" style="margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 14px; line-height: 1.6;">{{ msg.content }}</pre>
+            <span v-else-if="!msg.reasoning" style="color: #999; font-style: italic">无内容</span>
+          </div>
+        </div>
+        <el-empty v-if="!msgLoading && messages.length === 0" description="无消息记录" :image-size="60" />
       </div>
     </el-dialog>
   </div>

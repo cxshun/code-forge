@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { insightsApi } from '@/api/insights'
 import { workspacesApi } from '@/api/workspaces'
 import type { CostInsights, ToolInsight, ModelInsight } from '@/api/insights'
@@ -74,8 +74,6 @@ function costBarHeight(item: { cost_usd: number }): number {
   const max = Math.max(...(costData.value?.items.map((i) => i.cost_usd) ?? [0]), 0.001)
   return Math.max((item.cost_usd / max) * 120, 2)
 }
-
-import { computed } from 'vue'
 
 onMounted(async () => {
   const { useUserStore } = await import('@/stores/user')
