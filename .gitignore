@@ -24,3 +24,7 @@ data/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Serve script runtime (serve.sh)
+.serve-pids/
+.serve-logs/
