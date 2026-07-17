@@ -46,9 +46,11 @@ def _to_openai_messages(messages: list[Message], system: str | None) -> list[dic
             )
         else:
             msg: dict = {"role": m.role, "content": m.content or ""}
-            # thinking 模型（deepseek-v4-flash）的 reasoning_content 在多轮中必须回传给 API
-            if m.role == "assistant" and m.reasoning:
-                msg["reasoning_content"] = m.reasoning
+            # thinking 模型（deepseek-v4-flash）的 reasoning_content 在多轮中必须回传给 API。
+            # 即使本轮模型未产生思考内容（如纯 tool_call 轮），字段也必须存在（空串），
+            # 否则 DeepSeek 会返回 400: "reasoning_content must be passed back to the API"
+            if m.role == "assistant":
+                msg["reasoning_content"] = m.reasoning or ""
             if m.tool_calls:
                 msg["tool_calls"] = [
                     {

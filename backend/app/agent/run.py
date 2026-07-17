@@ -105,7 +105,10 @@ async def load_chat_history(
                 content = row.get("content")
                 if not content:
                     continue
-                messages.append(Message(role=row["role"], content=content))
+                msgs_kwargs: dict = {"role": row["role"], "content": content}
+                if row["role"] == "assistant" and row.get("reasoning"):
+                    msgs_kwargs["reasoning"] = row["reasoning"]
+                messages.append(Message(**msgs_kwargs))
         limit = settings.chat_history_max_messages
         if len(messages) > limit:
             messages = messages[-limit:]
