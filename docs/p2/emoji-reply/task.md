@@ -1,7 +1,7 @@
 # P2 - Emoji 确认回复：开发任务列表
 
 > 任务拆分依据：[spec.md](./spec.md)（需求）/ [design.md](./design.md)（设计）。
-> 一期 MVP 任务列表见 [../mvp/task.md](../mvp/task.md)。
+> 一期 MVP 任务列表见 [../../mvp/task.md](../../mvp/task.md)。
 
 ---
 

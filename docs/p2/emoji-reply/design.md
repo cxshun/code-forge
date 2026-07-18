@@ -1,6 +1,6 @@
 # P2 - Emoji 确认回复：设计文档
 
-> 二期迭代。一期 MVP 设计文档见 [../mvp/design.md](../mvp/design.md)。
+> 二期迭代。一期 MVP 设计文档见 [../../mvp/design.md](../../mvp/design.md)。
 
 ---
 

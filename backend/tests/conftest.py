@@ -32,8 +32,10 @@ async def _ensure_test_database():
     db_name = url.database
 
     # 连 maintenance postgres 库创建测试库（CREATE DATABASE 不能在事务中执行）
+    # 注意：直接传 URL 对象，不能用 str(url)——SQLAlchemy 2.0 起 str(url) 会把密码
+    # 渲染成 `***`，导致连接认证失败。
     maint = create_async_engine(
-        str(url.set(database="postgres")), isolation_level="AUTOCOMMIT"
+        url.set(database="postgres"), isolation_level="AUTOCOMMIT"
     )
     try:
         async with maint.connect() as conn:
@@ -46,7 +48,7 @@ async def _ensure_test_database():
         await maint.dispose()
 
     # 建表（幂等；checkfirst）
-    engine = create_async_engine(str(url))
+    engine = create_async_engine(url)
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

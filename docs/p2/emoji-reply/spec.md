@@ -1,6 +1,6 @@
 # P2 - Emoji 确认回复：需求规格
 
-> 二期迭代。一期 MVP 文档见 [../mvp/spec.md](../mvp/spec.md)。
+> 二期迭代。一期 MVP 文档见 [../../mvp/spec.md](../../mvp/spec.md)。
 
 ---
 

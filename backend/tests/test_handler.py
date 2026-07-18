@@ -23,6 +23,7 @@ pytestmark = pytest.mark.asyncio
 async def _isolated(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", str(tmp_path_factory.mktemp("cf_data")))
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+    monkeypatch.setattr(settings, "default_p2p_workspace_id", None)
     await reset_all()
     await redis_client.flushdb()
     yield
@@ -33,6 +34,8 @@ class _FakeClient:
     def __init__(self):
         self.sent: list[dict] = []
         self.updated: list[tuple[str, dict]] = []
+        self.added_reactions: list[tuple[str, str]] = []
+        self.deleted_reactions: list[tuple[str, str]] = []
 
     async def send_card(self, chat_id, card):
         self.sent.append(card)
@@ -43,6 +46,14 @@ class _FakeClient:
 
     async def get_message(self, parent_id):
         return None  # 无引用
+
+    async def add_reaction(self, message_id, emoji_type="OnIt"):
+        rid = f"r_{len(self.added_reactions) + 1}"
+        self.added_reactions.append((message_id, emoji_type))
+        return rid
+
+    async def delete_reaction(self, message_id, reaction_id):
+        self.deleted_reactions.append((message_id, reaction_id))
 
 
 async def _seed():
@@ -128,9 +139,9 @@ async def test_handle_no_anthropic_key_sends_error_card(monkeypatch):
     monkeypatch.setattr(handler_module.run_queue, "submit", fake_submit)
     await handler_module.handle_message(_group_event(), "cli_a", "secret", "ou_bot")
     assert not submitted
-    # 错误卡正文（elements[0].text.content）含提示
-    texts = [e["elements"][0]["text"]["content"] for e in fake_client.sent]
-    assert any("Anthropic API Key" in t for t in texts)
+    # 错误卡正文（elements[0].content，markdown 元素）含提示
+    texts = [e["elements"][0]["content"] for e in fake_client.sent]
+    assert any("LLM Provider" in t for t in texts)
 
 
 async def test_handle_unbound_chat_no_submit(monkeypatch):
@@ -150,9 +161,11 @@ async def test_handle_unbound_chat_no_submit(monkeypatch):
     assert not submitted
 
 
-async def test_handle_non_group_ignored(monkeypatch):
+async def test_handle_p2p_without_default_ws_ignored(monkeypatch):
+    """p2p 单聊在未配置默认 WS 时按未绑定忽略（D-DC.2 / D-DC.3）。"""
     await _seed()
     submitted = False
+    monkeypatch.setattr(settings, "default_p2p_workspace_id", None)
     monkeypatch.setattr(handler_module, "FeishuClient", lambda *a, **k: _FakeClient())
 
     async def fake_submit(**kw):
@@ -160,28 +173,28 @@ async def test_handle_non_group_ignored(monkeypatch):
         submitted = True
 
     monkeypatch.setattr(handler_module.run_queue, "submit", fake_submit)
-    evt = _group_event()
+    evt = _group_event(chat_id="oc_p2p_unbound")  # 未绑定 chat
     evt["event"]["message"]["chat_type"] = "p2p"
     await handler_module.handle_message(evt, "cli_a", "secret", "ou_bot")
     assert not submitted
 
 
 async def test_callbacks_stream_and_finalize(monkeypatch):
-    """直接驱动 FeishuRunCallbacks：on_text 节流更新、on_done 成功 flush。"""
+    """非流式：on_text 仅累积不更新卡片，on_done 一次性渲染完整正文。"""
     fake_client = _FakeClient()
     monkeypatch.setattr(handler_module, "FeishuClient", lambda *a, **k: fake_client)
     cb = handler_module.FeishuRunCallbacks(fake_client, "oc_g", footer="sender abcd1234")
     await cb.on_start()
     assert fake_client.sent  # thinking 卡片已发
 
-    # 推送足量文本触发节流更新（阈值 ~200 token = ~800 chars）
-    big = "x" * 900
-    await cb.on_text(big)
-    assert fake_client.updated  # 节流后 update_card 被调
+    # 非流式：推送文本不触发卡片更新（避免流式分片导致表格/格式解析异常）
+    await cb.on_text("x" * 900)
+    assert not fake_client.updated  # on_text 不更新卡片
+
     await cb.on_text("结尾")
-    await cb.on_done(None)  # 成功 finalize
-    assert fake_client.updated  # 最终更新
-    final_text = fake_client.updated[-1][1]["elements"][0]["text"]["content"]
+    await cb.on_done(None)  # 成功 finalize：一次性渲染累积正文
+    assert fake_client.updated  # on_done 才 update_card
+    final_text = fake_client.updated[-1][1]["elements"][0]["content"]
     assert "结尾" in final_text
 
 
@@ -191,5 +204,5 @@ async def test_callbacks_done_error_shows_failure(monkeypatch):
     cb = handler_module.FeishuRunCallbacks(fake_client, "oc_g", footer=None)
     await cb.on_start()
     await cb.on_done(RuntimeError("boom"))
-    final_text = fake_client.updated[-1][1]["elements"][0]["text"]["content"]
+    final_text = fake_client.updated[-1][1]["elements"][0]["content"]
     assert "执行失败" in final_text and "boom" in final_text

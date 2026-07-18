@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # 跨 session 历史加载：新 Run 启动时从最近一次已完成 session 加载多少条消息
     chat_history_max_messages: int = 20
 
+    # 单聊（p2p）自动绑定目标 WS（P2 direct-chat D-DC.3）：未配置则关闭单聊自动接受
+    default_p2p_workspace_id: int | None = None
+
     @property
     def is_prod(self) -> bool:
         return self.app_env == "prod"
@@ -89,7 +92,9 @@ class Settings(BaseSettings):
         url = make_url(self.pg_dsn)
         if self.is_test:
             url = url.set(database="codeforge_test")
-        return str(url)
+        # SQLAlchemy 2.0 起 str(url) 默认把密码渲染为 `***`，会导致拿此串去连接时
+        # 认证失败（InvalidPasswordError）。必须显式保留真实密码。
+        return url.render_as_string(hide_password=False)
 
     @property
     def workspaces_root(self) -> str:

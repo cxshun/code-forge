@@ -32,7 +32,7 @@ from app.feishu.cards import (
 from app.feishu.client import FeishuClient
 from app.feishu.dedup import acquire
 from app.feishu.quote import parse_message_event
-from app.feishu.router import resolve_feishu_chat
+from app.feishu.router import auto_bind_p2p_chat, resolve_feishu_chat
 
 log = logging.getLogger("feishu.handler")
 
@@ -106,9 +106,20 @@ async def handle_message(
     if ctx is None:
         return
 
-    # 仅群聊 + @机器人触发（D21 / F3.1.3）
-    if ctx.chat_type != "group" or not ctx.at_bot:
-        log.info("ignore (chat_type=%s at_bot=%s): %s", ctx.chat_type, ctx.at_bot, ctx.message_id)
+    # 触发条件（D-DC.1）：
+    #   - group：必须 @ 机器人（MVP D21 / F3.1.3 不变）
+    #   - p2p：直接触发（P2 direct-chat，无需 @）
+    #   - 其他 chat_type：忽略
+    if ctx.chat_type == "group":
+        if not ctx.at_bot:
+            log.info(
+                "ignore group without @: %s", ctx.message_id
+            )
+            return
+    elif ctx.chat_type != "p2p":
+        log.info(
+            "ignore unknown chat_type=%s: %s", ctx.chat_type, ctx.message_id
+        )
         return
 
     # D38 去重（进 Run 队列前）
@@ -116,9 +127,17 @@ async def handle_message(
         log.info("duplicate dropped: %s", ctx.message_id)
         return
 
-    # 路由 (app_id, chat_id) → FeishuChat
+    # 路由 (app_id, chat_id) → FeishuChat；p2p 未绑定时自动建记录指向默认 WS（D-DC.2）
     async with async_session_factory() as db:
         chat = await resolve_feishu_chat(db, ctx.app_id, ctx.chat_id)
+        if chat is None and ctx.chat_type == "p2p":
+            chat = await auto_bind_p2p_chat(
+                db,
+                ctx.app_id,
+                ctx.chat_id,
+                ctx.sender_open_id,
+                settings.default_p2p_workspace_id,
+            )
         if chat is None:
             log.info("unbound chat, ignore: app=%s chat=%s", ctx.app_id, ctx.chat_id)
             return
