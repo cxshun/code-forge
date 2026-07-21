@@ -31,7 +31,7 @@ export const workspacesApi = {
     return http.patch<unknown, WorkspaceOut>(`${BASE}/${wsId}`, data)
   },
   delete(wsId: number) {
-    return http.delete<unknown, { task_id: number }>(`${BASE}/${wsId}`)
+    return http.delete<unknown, { task_id: number; unbound_chats: number; unbound_skills: number; unbound_mcps: number }>(`${BASE}/${wsId}`)
   },
 
   listRepos(wsId: number) {

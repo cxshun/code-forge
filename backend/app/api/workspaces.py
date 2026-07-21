@@ -33,6 +33,7 @@ from app.db.models import (
     Skill,
     Task,
     User,
+    UserRole,
     Workspace,
     WorkspaceMcp,
     WorkspaceSkill,
@@ -60,17 +61,26 @@ async def list_workspaces(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_user),
 ):
-    wss = (
-        await db.scalars(
-            select(Workspace)
-            .where(Workspace.owner_id == user.id)
-            .order_by(Workspace.id)
-        )
-    ).all()
-    return {
-        "items": [_ws_out(w, owner_name=user.username) for w in wss],
-        "total": len(wss),
-    }
+    if user.role == UserRole.admin.value:
+        # admin 看全部 WS（含 p2p 自动建的），join User 取真实 owner_name
+        rows = (
+            await db.execute(
+                select(Workspace, User.username)
+                .join(User, User.id == Workspace.owner_id)
+                .order_by(Workspace.id)
+            )
+        ).all()
+        items = [_ws_out(ws, owner_name=owner_name) for ws, owner_name in rows]
+    else:
+        wss = (
+            await db.scalars(
+                select(Workspace)
+                .where(Workspace.owner_id == user.id)
+                .order_by(Workspace.id)
+            )
+        ).all()
+        items = [_ws_out(w, owner_name=user.username) for w in wss]
+    return {"items": items, "total": len(items)}
 
 
 @router.post("", status_code=201)
@@ -159,7 +169,7 @@ async def delete_workspace(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_user),
 ):
-    # 删除前校验：已解绑所有 FeishuChat + 解除广场引用（F3.2.5）
+    # 统计关联数据用于前端提示；均有 ondelete=CASCADE，删 WS 时自动级联清理
     chat_count = (
         await db.scalar(
             select(func.count())
@@ -167,8 +177,6 @@ async def delete_workspace(
             .where(FeishuChat.workspace_id == ws.id)
         )
     ) or 0
-    if chat_count:
-        raise api_error(422, f"请先解绑 {chat_count} 个 FeishuChat 再删除")
     skill_count = (
         await db.scalar(
             select(func.count())
@@ -183,12 +191,15 @@ async def delete_workspace(
             .where(WorkspaceMcp.workspace_id == ws.id)
         )
     ) or 0
-    if skill_count or mcp_count:
-        raise api_error(422, "请先解除 Skill / MCP 广场引用再删除")
 
     task = Task(task_type="ws_delete", owner_id=user.id)
     db.add(task)
     await db.commit()
     await db.refresh(task)
     task_runner.submit(task.id, _cascade_delete(ws.id))
-    return {"task_id": task.id}
+    return {
+        "task_id": task.id,
+        "unbound_chats": chat_count,
+        "unbound_skills": skill_count,
+        "unbound_mcps": mcp_count,
+    }

@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     # 跨 session 历史加载：新 Run 启动时从最近一次已完成 session 加载多少条消息
     chat_history_max_messages: int = 20
 
-    # 单聊（p2p）自动绑定目标 WS（P2 direct-chat D-DC.3）：未配置则关闭单聊自动接受
-    default_p2p_workspace_id: int | None = None
+    # 单聊（p2p）自动建 WS 的 owner（P2 direct-chat D-DC.3 / D-DC.7）：未配置则关闭单聊自动接受
+    p2p_workspace_owner_id: int | None = None
 
     @property
     def is_prod(self) -> bool:

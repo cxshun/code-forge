@@ -84,6 +84,58 @@
 - **LLM 集成**：Anthropic Claude（主）/ OpenAI 兼容端点（GLM / DeepSeek / 通义等备选）
 - **飞书 SDK**：lark-oapi（WebSocket 模式）
 
+## 核心架构约束
+
+### Workspace 隔离模型
+
+- **Workspace 是多租户隔离的核心单元**：所有 Run / Repo / Skill / MCP 挂载都归属某个 WS。
+- 每个 `FeishuChat (app_id, chat_id)` 绑定到唯一 Workspace（`FeishuChat.workspace_id`）。
+- 群聊 WS 由 admin 手动创建；p2p 单聊 WS 首次收到消息时由 `auto_bind_p2p_chat` 自动创建（owner = `P2P_WORKSPACE_OWNER_ID`）。
+- **p2p 与群聊一视同仁**：仅触发方式不同（群聊需 @，p2p 直接触发），WS 命名与展示无差异；p2p WS 优先用 sender 展示名命名，不标记 "p2p:" 前缀。
+
+### 飞书消息处理流
+
+- 入口：`app/feishu/handler.py::handle_message(event_dict, app_id, app_secret, bot_open_id)`。
+- 流程：`parse_message_event` → `chat_type` 分支（group 需 @ / p2p 直接 / 其他忽略）→ D38 去重 → 路由 `(app_id, chat_id) → FeishuChat → WS` → 组装 Run 依赖 → `run_queue.submit`。
+- **Run 串行化**：同一 WS 的 Run 共享队列串行执行（WS 写锁，D20）。
+- **卡片生命周期**：`on_queue` → `on_start` → `on_text`（仅累积不更新卡片）→ `on_done`（一次性渲染完整正文，含 GFM 表格等）。
+
+### Run 与上下文管理
+
+- Context 四道防线由 `ContextConfig.from_ws(ws.context_config)` 构造，`ContextManager` 编排；`context_config.enabled=false` 时不启用。
+- MCP 连接在 Run 结束后关闭（成功 / 失败 / 中断 / 取消均执行 cleanup）。
+- 流式文本仅累积，不在 `on_text` 时更新卡片（避免表格 / 格式解析异常）。
+
+## 飞书集成要点
+
+- **lark_oapi 是同步 API**：所有调用必须用 `asyncio.to_thread` 包装，禁止直接调用同步方法。
+- **FeishuClient 生命周期**：每次 `handle_message` 新建一个 client（持有 app_id / app_secret），不复用。
+- **bot_open_id**：从飞书事件元数据解析，用于识别 @ 机器人；`parse_message_event` 需要传入。
+- **contact v3 API**：`get_user_name(open_id)` 拉 sender 展示名，需飞书应用授予 `contact:contact.base:readonly`（或同级 contact 读权限）；无权限时返回 None（graceful fallback，不抛异常）。
+- **消息去重**：`acquire(redis, message_id)` 在进 Run 队列前完成，重复消息直接丢弃。
+- **异常不向上抛**：handler 内的飞书 API 调用失败（卡片发送 / 表情添加）仅 log warning，不影响 Run 提交。
+
+## 前端状态刷新
+
+- **异步任务（Task）**：删除 / Clone 等异步操作返回 `task_id`，前端用 `useTaskPolling` 轮询；**必须在 `watch(isDone, ...)` 中触发数据刷新**，不能只靠用户关闭 alert 时刷新。
+- **同步 mutation**：直接 `await api.xxx()` 后调用对应的 `fetchXxx()` 刷新列表，不能依赖用户手动刷新。
+- **API 模块**：`src/api/` 按资源分文件（workspaces.ts / skills.ts / mcps.ts / tasks.ts 等），不要在一个文件里堆所有接口。
+- **UI 改动必须浏览器验证**：前端变更须启动 dev server 在浏览器中实测主路径 + 边界情况；仅靠 TypeScript 编译通过不等于功能正确。
+
+## 设计文档工作流
+
+- **重大改动先文档后代码**：架构调整、新模块、新需求须先在 `docs/` 下改设计文档，用户确认后再动代码。
+- **目录结构**：`docs/p1/`（MVP 阶段）、`docs/p2/`（P2 阶段），每个特性一个子目录，含 `spec.md`（需求）、`design.md`（设计 + 决策记录）、`task.md`（任务拆分）。
+- **决策记录**：设计文档中用 `D-XX.N` 编号记录关键决策（如 D-DC.7 p2p 按用户独立 WS），含规则 / 理由 / 不做的事。
+- **同步更新**：代码实现完成后，设计文档中的伪代码 / 文件表 / 测试用例表须同步更新，保持文档与代码一致。
+
+## 测试约定
+
+- **_FakeClient 模式**：mock `FeishuClient` 时实现需要的 async 方法（`send_card` / `update_card` / `add_reaction` / `delete_reaction` / `get_message` / `get_user_name`），通过 `monkeypatch.setattr(handler_module, "FeishuClient", lambda *a, **k: fake_client)` 注入。
+- **isolated fixture**：每个测试用 `@pytest.fixture(autouse=True)` 的 `_isolated` 重置 DB + Redis + 临时数据目录，避免状态泄漏。
+- **run_queue.submit mock**：用 `fake_submit` 捕获入队参数，并按需触发 `on_done` 回调测试卡片生命周期。
+- **新增功能须附带测试**；修复 Bug 须附回归测试。
+
 ## 快速参考
 
 | 操作 | 命令 |
