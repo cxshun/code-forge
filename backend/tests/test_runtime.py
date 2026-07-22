@@ -101,7 +101,11 @@ async def test_resolve_cwd_no_repo_empty():
     assert cwd == ""
 
 
-async def test_make_provider_returns_anthropic():
+async def test_make_provider_returns_anthropic(monkeypatch):
+    # 确保全局未配 openai_compatible → make_provider 回退 Anthropic
+    monkeypatch.setattr(settings, "openai_compatible_api_key", "")
+    monkeypatch.setattr(settings, "openai_compatible_base_url", "")
+    monkeypatch.setattr(settings, "openai_compatible_model", "")
     p = make_provider()
     assert isinstance(p, AnthropicProvider)
 

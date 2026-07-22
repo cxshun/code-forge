@@ -74,10 +74,10 @@ Code Forge 是一个云端多租户的 Coding Agent SaaS：
 ### 3.2 工作空间管理
 
 - **F3.2.1** 工作空间（WS）创建、查询、修改、删除
-- **F3.2.2** 1 WS 可挂载 N 个 Git Repo（HTTPS clone，可选 token 用于私有仓库）
+- **F3.2.2** 1 WS 可挂载 N 个 Git Repo（SSH URL 推荐，走本机 SSH key 鉴权；HTTPS URL 可选 token 用于私有仓库，UI 默认折叠为「高级选项」）
 - **F3.2.3** 1 WS 可绑定 N 个 FeishuChat（FeishuChat 独占：1 FeishuChat 只能绑 1 WS）
 - **F3.2.4** FeishuChat 唯一键 = `(app_id, chat_id)`；绑定时管理员选择已注册的飞书 App + 粘贴 chat_id，后端校验合法性 + 机器人是否在群
-- **F3.2.5** 删除 WS 前需解绑所有 FeishuChat、解除所有广场引用
+- **F3.2.5** 删除 WS 时自动级联清理所有 FeishuChat / GitRepo / Skill / MCP 挂载（DB `ondelete=CASCADE`），无需手动解绑；前端提示自动清理的数量
 
 ### 3.3 Agent 内核
 

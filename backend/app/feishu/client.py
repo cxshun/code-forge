@@ -7,14 +7,17 @@ lark 自动获取 + 缓存刷新。封装 IM API：查 chat / 判断机器人在
 
 import asyncio
 import json
+import logging
 
 import lark_oapi as lark
+from lark_oapi.api.contact.v3 import GetUserRequest
 from lark_oapi.api.im.v1 import (
     CreateMessageReactionRequest,
     CreateMessageReactionRequestBody,
     CreateMessageRequest,
     CreateMessageRequestBody,
     DeleteMessageReactionRequest,
+    GetChatMembersRequest,
     GetChatRequest,
     GetMessageRequest,
     PatchMessageRequest,
@@ -25,6 +28,9 @@ from lark_oapi.api.im.v1.model.emoji import Emoji
 
 class FeishuAPIError(Exception):
     """飞书 API 调用失败。"""
+
+
+log = logging.getLogger("feishu.client")
 
 
 def _check(resp) -> None:
@@ -53,6 +59,54 @@ class FeishuClient:
     async def is_bot_in_chat(self, chat_id: str) -> bool:
         """bot 能访问 chat（在群 / 有权限）即视为在群（MVP）。"""
         return await self.get_chat(chat_id) is not None
+
+    async def get_user_name(self, open_id: str) -> str | None:
+        """查用户展示名（contact v3）；无权限 / 用户不存在返回 None。
+
+        需飞书应用授予 ``contact:contact.base:readonly``（或同级 contact 读权限）。
+        """
+        req = (
+            GetUserRequest.builder()
+            .user_id(open_id)
+            .user_id_type("open_id")
+            .build()
+        )
+        resp = await asyncio.to_thread(self._client.contact.v3.user.get, req)
+        if not resp.success():
+            log.warning(
+                "get_user_name failed: open_id=%s code=%s msg=%s",
+                open_id, resp.code, resp.msg,
+            )
+            return None
+        user = getattr(resp.data, "user", None)
+        name = getattr(user, "name", None) if user is not None else None
+        return name or None
+
+    async def get_chat_member_name(self, chat_id: str) -> str | None:
+        """查 chat 对方展示名（im.v1.chat_members）；仅 IM 权限，无需通讯录权限。
+
+        p2p chat 的成员列表只含对方用户（不含 bot），取第一个成员的 name。
+        """
+        req = (
+            GetChatMembersRequest.builder()
+            .chat_id(chat_id)
+            .member_id_type("open_id")
+            .page_size(20)
+            .build()
+        )
+        resp = await asyncio.to_thread(self._client.im.v1.chat_members.get, req)
+        if not resp.success():
+            log.warning(
+                "get_chat_member_name failed: chat_id=%s code=%s msg=%s",
+                chat_id, resp.code, resp.msg,
+            )
+            return None
+        items = getattr(resp.data, "items", None) or []
+        for m in items:
+            name = getattr(m, "name", None)
+            if name:
+                return name
+        return None
 
     async def send_text(self, chat_id: str, text: str) -> str:
         body = (

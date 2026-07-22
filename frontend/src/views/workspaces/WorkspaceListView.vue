@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { workspacesApi } from '@/api/workspaces'
@@ -48,12 +48,23 @@ async function onDelete(ws: WorkspaceOut) {
   if (!ok) return
   try {
     const res = await workspacesApi.delete(ws.id)
-    ElMessage.info('删除任务已提交，正在清理...')
+    const parts: string[] = []
+    if (res.unbound_chats) parts.push(`${res.unbound_chats} 个飞书群`)
+    if (res.unbound_skills) parts.push(`${res.unbound_skills} 个 Skill`)
+    if (res.unbound_mcps) parts.push(`${res.unbound_mcps} 个 MCP`)
+    const hint = parts.length
+      ? `删除任务已提交，将自动解绑 ${parts.join('、')}…`
+      : '删除任务已提交，正在清理…'
+    ElMessage.info(hint)
     startDeletePoll(res.task_id)
   } catch {
     // 错误已由拦截器提示
   }
 }
+
+watch(deleteDone, (done) => {
+  if (done) fetchList()
+})
 
 function goToDetail(ws: WorkspaceOut) {
   router.push(`/workspaces/${ws.id}`)

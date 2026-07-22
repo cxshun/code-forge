@@ -127,16 +127,35 @@ async def handle_message(
         log.info("duplicate dropped: %s", ctx.message_id)
         return
 
-    # 路由 (app_id, chat_id) → FeishuChat；p2p 未绑定时自动建记录指向默认 WS（D-DC.2）
+    # 路由 (app_id, chat_id) → FeishuChat；p2p 未绑定时自动建专属 WS（D-DC.2 / D-DC.7）
+    client = FeishuClient(app_id, app_secret)
+    sender_name: str | None = None
     async with async_session_factory() as db:
         chat = await resolve_feishu_chat(db, ctx.app_id, ctx.chat_id)
         if chat is None and ctx.chat_type == "p2p":
+            # 优先用 chat_members API（仅需 IM 权限），fallback 到 contact API
+            try:
+                sender_name = await client.get_chat_member_name(ctx.chat_id)
+            except Exception:
+                log.warning(
+                    "get_chat_member_name failed: %s", ctx.chat_id, exc_info=True
+                )
+            if not sender_name and ctx.sender_open_id:
+                try:
+                    sender_name = await client.get_user_name(ctx.sender_open_id)
+                except Exception:
+                    log.warning(
+                        "get_user_name failed: %s",
+                        ctx.sender_open_id,
+                        exc_info=True,
+                    )
             chat = await auto_bind_p2p_chat(
                 db,
                 ctx.app_id,
                 ctx.chat_id,
                 ctx.sender_open_id,
-                settings.default_p2p_workspace_id,
+                settings.p2p_workspace_owner_id,
+                sender_name=sender_name,
             )
         if chat is None:
             log.info("unbound chat, ignore: app=%s chat=%s", ctx.app_id, ctx.chat_id)
@@ -144,13 +163,15 @@ async def handle_message(
         ws_id = chat.workspace_id
         feishu_chat_id = chat.id
         ws = await db.get(Workspace, ws_id)
-        provider = make_provider()
+        provider = make_provider(ws.model_config)
         registry, skill_descriptions, mcp_cleanup = await build_registry(db, ws_id, provider)
         cwd = await resolve_cwd(db, ws)
         ctx_cfg = ContextConfig.from_ws(ws.context_config)
 
-    client = FeishuClient(app_id, app_secret)
-    footer = f"sender {ctx.sender_open_id[-8:]}" if ctx.sender_open_id else None
+    footer_label = sender_name or (
+        ctx.sender_open_id[-8:] if ctx.sender_open_id else None
+    )
+    footer = f"sender {footer_label}" if footer_label else None
 
     # 收到确认：在用户消息上打「OnIt」表情（处理完成后移除）
     reaction_id = None

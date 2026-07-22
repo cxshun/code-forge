@@ -23,7 +23,7 @@ pytestmark = pytest.mark.asyncio
 async def _isolated(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", str(tmp_path_factory.mktemp("cf_data")))
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
-    monkeypatch.setattr(settings, "default_p2p_workspace_id", None)
+    monkeypatch.setattr(settings, "p2p_workspace_owner_id", None)
     await reset_all()
     await redis_client.flushdb()
     yield
@@ -54,6 +54,12 @@ class _FakeClient:
 
     async def delete_reaction(self, message_id, reaction_id):
         self.deleted_reactions.append((message_id, reaction_id))
+
+    async def get_user_name(self, open_id):
+        return None
+
+    async def get_chat_member_name(self, chat_id):
+        return None
 
 
 async def _seed():
@@ -126,6 +132,10 @@ async def test_handle_submits_run_with_callbacks(monkeypatch):
 
 async def test_handle_no_anthropic_key_sends_error_card(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
+    # 同时清除 openai_compatible 配置，模拟无任何 LLM Provider 可用的场景
+    monkeypatch.setattr(settings, "openai_compatible_api_key", "")
+    monkeypatch.setattr(settings, "openai_compatible_base_url", "")
+    monkeypatch.setattr(settings, "openai_compatible_model", "")
     await _seed()
     fake_client = _FakeClient()
     monkeypatch.setattr(handler_module, "FeishuClient", lambda *a, **k: fake_client)
@@ -161,11 +171,11 @@ async def test_handle_unbound_chat_no_submit(monkeypatch):
     assert not submitted
 
 
-async def test_handle_p2p_without_default_ws_ignored(monkeypatch):
-    """p2p 单聊在未配置默认 WS 时按未绑定忽略（D-DC.2 / D-DC.3）。"""
+async def test_handle_p2p_without_owner_ignored(monkeypatch):
+    """p2p 单聊在未配置 owner 时按未绑定忽略（D-DC.2 / D-DC.3 / D-DC.7）。"""
     await _seed()
     submitted = False
-    monkeypatch.setattr(settings, "default_p2p_workspace_id", None)
+    monkeypatch.setattr(settings, "p2p_workspace_owner_id", None)
     monkeypatch.setattr(handler_module, "FeishuClient", lambda *a, **k: _FakeClient())
 
     async def fake_submit(**kw):

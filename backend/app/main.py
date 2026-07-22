@@ -25,6 +25,7 @@ from app.api.health import router as health_router
 from app.api.insights import router as insights_router
 from app.api.mcps import router as mcps_router
 from app.api.memory import router as memory_router
+from app.api.models import router as models_router
 from app.api.monitoring import router as monitoring_router
 from app.api.mounts import router as mounts_router
 from app.api.repos import router as repos_router
@@ -118,6 +119,7 @@ app.include_router(skills_router, prefix="/api/admin")
 app.include_router(traces_router, prefix="/api/admin")
 app.include_router(insights_router, prefix="/api/admin")
 app.include_router(monitoring_router, prefix="/api/admin")
+app.include_router(models_router, prefix="/api/admin")
 
 
 @app.exception_handler(StarletteHTTPException)

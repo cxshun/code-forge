@@ -3,7 +3,7 @@
 验证：cost/tools/models 三个聚合端点数据正确 + WS 隔离。
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -70,6 +70,8 @@ async def _seed_spans(ws_id: int, chat_id: int):
         await s.commit()
         await s.refresh(run)
 
+        t0 = datetime.now(UTC).replace(hour=10, minute=0, second=0, microsecond=0)
+
         # Root run span
         run_span = Span(
             span_id="a" * 32,
@@ -80,8 +82,8 @@ async def _seed_spans(ws_id: int, chat_id: int):
             feishu_chat_id=chat_id,
             session_id=sess.id,
             run_id=run.id,
-            started_at=datetime(2026, 7, 11, 10, 0, 0, tzinfo=UTC),
-            ended_at=datetime(2026, 7, 11, 10, 1, 0, tzinfo=UTC),
+            started_at=t0,
+            ended_at=t0 + timedelta(minutes=1),
             duration_ms=60000,
         )
         s.add(run_span)
@@ -103,8 +105,8 @@ async def _seed_spans(ws_id: int, chat_id: int):
             input_tokens=1000,
             output_tokens=500,
             cost_usd=0.0105,
-            started_at=datetime(2026, 7, 11, 10, 0, 1, tzinfo=UTC),
-            ended_at=datetime(2026, 7, 11, 10, 0, 10, tzinfo=UTC),
+            started_at=t0 + timedelta(seconds=1),
+            ended_at=t0 + timedelta(seconds=10),
             duration_ms=9000,
         )
         s.add(llm1)
@@ -126,8 +128,8 @@ async def _seed_spans(ws_id: int, chat_id: int):
             input_tokens=2000,
             output_tokens=1000,
             cost_usd=0.105,
-            started_at=datetime(2026, 7, 11, 10, 0, 11, tzinfo=UTC),
-            ended_at=datetime(2026, 7, 11, 10, 0, 20, tzinfo=UTC),
+            started_at=t0 + timedelta(seconds=11),
+            ended_at=t0 + timedelta(seconds=20),
             duration_ms=9000,
         )
         s.add(llm2)
@@ -146,8 +148,8 @@ async def _seed_spans(ws_id: int, chat_id: int):
             run_id=run.id,
             tool_name="Read",
             duration_ms=500,
-            started_at=datetime(2026, 7, 11, 10, 0, 21, tzinfo=UTC),
-            ended_at=datetime(2026, 7, 11, 10, 0, 22, tzinfo=UTC),
+            started_at=t0 + timedelta(seconds=21),
+            ended_at=t0 + timedelta(seconds=22),
         )
         s.add(tool_span)
         await s.commit()

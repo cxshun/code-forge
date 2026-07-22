@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     openai_compatible_base_url: str = ""  # 如 https://open.bigmodel.cn/api/paas/v4
     openai_compatible_model: str = ""  # 如 glm-4.6 / qwen-plus / deepseek-chat
 
+    # P3 D-CE.4: model 元数据覆盖（JSON 字符串），用于新 model 上线无需发版
+    # 例：{"my-custom-model":{"context_window":32000,"max_output_tokens":4096}}
+    model_overrides: str = ""
+
     # 子代理并行度上限（design D33：防 fork 爆炸，超限排队）
     agent_max_concurrency: int = 5
 
@@ -72,8 +76,8 @@ class Settings(BaseSettings):
     # 跨 session 历史加载：新 Run 启动时从最近一次已完成 session 加载多少条消息
     chat_history_max_messages: int = 20
 
-    # 单聊（p2p）自动绑定目标 WS（P2 direct-chat D-DC.3）：未配置则关闭单聊自动接受
-    default_p2p_workspace_id: int | None = None
+    # 单聊（p2p）自动建 WS 的 owner（P2 direct-chat D-DC.3 / D-DC.7）：未配置则关闭单聊自动接受
+    p2p_workspace_owner_id: int | None = None
 
     @property
     def is_prod(self) -> bool:

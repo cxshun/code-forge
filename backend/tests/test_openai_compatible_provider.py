@@ -84,8 +84,11 @@ async def test_chat_parses_tool_calls(monkeypatch):
 
 
 async def test_count_tokens_char_estimate(monkeypatch):
+    """L2 fallback path: tiktoken 不可用时走 len//4 字符估算（design D-CE.3）。"""
     _cfg(monkeypatch)
     provider = OpenAICompatibleProvider()
+    # 模拟 tiktoken 未安装，测试 fallback 路径
+    monkeypatch.setattr(provider, "_enc", None)
     usage = await provider.count_tokens([Message(role="user", content="x" * 40)])
     assert usage.input_tokens == 10  # 40 // 4
 

@@ -39,8 +39,8 @@ MVP F3.1.2 / D13 明确"仅支持群聊，私聊暂不做"，接入层 `handle_m
 > 编号接续 [emoji-reply F2.1–F2.6](../emoji-reply/spec.md)。本子主题范围 F2.7–F2.13。
 
 - **F2.7** 收到 `chat_type == "p2p"` 的消息事件时，跳过 @ 校验，直接进入 Run 提交流程
-- **F2.8** 首次收到未绑定的 p2p `(app_id, chat_id)` 时，自动创建 FeishuChat 记录，`workspace_id` 取自配置项 `DEFAULT_P2P_WORKSPACE_ID`
-- **F2.9** 未配置 `DEFAULT_P2P_WORKSPACE_ID` 时，单聊消息按"未绑定"处理（log warning + 忽略，不创建记录）
+- **F2.8** 首次收到未绑定的 p2p `(app_id, chat_id)` 时，自动创建专属 Workspace + FeishuChat 记录，`Workspace.owner_id` 取自配置项 `P2P_WORKSPACE_OWNER_ID`（D-DC.7 演进：一人一个 WS，而非共享默认 WS）
+- **F2.9** 未配置 `P2P_WORKSPACE_OWNER_ID` 时，单聊消息按"未绑定"处理（log warning + 忽略，不创建 WS / 不创建 FeishuChat）
 - **F2.10** 单聊场景复用 MVP 全部既有机制：
   - 路由解析（`resolve_feishu_chat`，唯一键 `(app_id, chat_id)`）
   - D38 去重（按 message_id）
@@ -65,7 +65,7 @@ MVP F3.1.2 / D13 明确"仅支持群聊，私聊暂不做"，接入层 `handle_m
 ## 4. 约束与假设
 
 - **机器人需先被用户加为好友**：单聊消息事件才会推送（飞书原生约束）
-- **`DEFAULT_P2P_WORKSPACE_ID` 必须存在且 owner 有权使用**：否则按未绑定处理
+- **`P2P_WORKSPACE_OWNER_ID` 必须指向存在且 `status=active` 的 User**：否则按未绑定处理（NF2.5）
 - **同一 `(app_id, user_open_id)` 的 p2p chat_id 在飞书侧稳定**：一个用户对一个机器人只有一个 p2p chat_id，自动绑定的 FeishuChat 记录不会重复创建（依赖 `(app_id, chat_id)` 唯一键）
 - **资源风险**：任意好友即可触发 Run → 恶意用户可耗尽 LLM 配额；MVP 不做限流，由 owner 自行控制机器人好友列表
 
