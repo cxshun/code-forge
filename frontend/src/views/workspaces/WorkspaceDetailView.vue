@@ -15,7 +15,11 @@ import type {
   ChatCheckResult,
   SkillBrief,
   McpBrief,
+  ContextConfig,
+  ModelConfig,
 } from '@/types/workspace'
+import { DEFAULT_CONTEXT_CONFIG } from '@/types/workspace'
+import { modelsApi, type ModelMeta } from '@/api/models'
 import type { SkillOut } from '@/types/skill'
 import type { McpOut } from '@/types/mcp'
 import type { FeishuAppOut } from '@/types/feishu-app'
@@ -29,8 +33,99 @@ const loading = ref(false)
 
 // Overview
 const editName = ref('')
-const editConfig = ref('')
 const savingOverview = ref(false)
+
+// Context Config (P3 D-CE.5)
+const ctxCfg = ref<ContextConfig>({ ...DEFAULT_CONTEXT_CONFIG })
+const savingCtxCfg = ref(false)
+
+// Model Config (P3 D-CE.6)
+const modelCfg = ref<ModelConfig>({ provider: 'anthropic', model: null, api_base_url: null })
+const modelList = ref<ModelMeta[]>([])
+const hasApiKey = ref(false)
+const apiKeyInput = ref('')
+const savingModelCfg = ref(false)
+
+function loadModelCfg() {
+  if (!ws.value?.model_config) {
+    modelCfg.value = { provider: 'anthropic', model: null, api_base_url: null }
+    hasApiKey.value = false
+    return
+  }
+  const mc = ws.value.model_config
+  modelCfg.value = {
+    provider: mc.provider || 'anthropic',
+    model: mc.model || null,
+    api_base_url: mc.api_base_url || null,
+  }
+  hasApiKey.value = ws.value.has_model_api_key ?? false
+  apiKeyInput.value = ''
+}
+
+function resetModelCfg() {
+  modelCfg.value = { provider: 'anthropic', model: null, api_base_url: null }
+  apiKeyInput.value = ''
+}
+
+async function saveModelCfg() {
+  savingModelCfg.value = true
+  try {
+    const payload: Record<string, unknown> = {
+      provider: modelCfg.value.provider,
+      model: modelCfg.value.model || null,
+      api_base_url: modelCfg.value.api_base_url || null,
+    }
+    // 只有用户输入了 api_key 才发送（空串 = 清除）
+    if (apiKeyInput.value) {
+      payload.api_key = apiKeyInput.value
+    }
+    await workspacesApi.patch(wsId, { model_config: payload as unknown as ModelConfig })
+    showSuccess('模型配置已保存')
+    await fetchDetail()
+  } finally {
+    savingModelCfg.value = false
+  }
+}
+
+function loadCtxCfg() {
+  if (!ws.value?.context_config) {
+    ctxCfg.value = { ...DEFAULT_CONTEXT_CONFIG }
+    return
+  }
+  ctxCfg.value = { ...DEFAULT_CONTEXT_CONFIG, ...ws.value.context_config }
+}
+
+function resetCtxCfg() {
+  ctxCfg.value = { ...DEFAULT_CONTEXT_CONFIG }
+}
+
+function validateCtxCfg(): string | null {
+  const c = ctxCfg.value
+  if (c.trigger1 >= c.trigger2) return 'L1 阈值必须小于 L2 阈值'
+  if (c.trigger2 >= 0.95) return 'L2 阈值必须小于 0.95'
+  if (c.clear_keep < 1) return 'L1 保留数必须 ≥ 1'
+  if (c.compact_recent < 1) return 'L2 保留轮数必须 ≥ 1'
+  if (c.summary_budget_pct < 0 || c.summary_budget_pct > 0.5) {
+    return '摘要预算百分比必须在 0 ~ 0.5 之间'
+  }
+  return null
+}
+
+async function saveCtxCfg() {
+  const err = validateCtxCfg()
+  if (err) {
+    ElMessage.error(err)
+    return
+  }
+  savingCtxCfg.value = true
+  try {
+    await workspacesApi.patch(wsId, { context_config: ctxCfg.value })
+    showSuccess('上下文配置已保存')
+    await fetchDetail()
+  } finally {
+    savingCtxCfg.value = false
+  }
+}
 
 // Repos
 const repos = ref<RepoOut[]>([])
@@ -69,7 +164,8 @@ async function fetchDetail() {
   try {
     ws.value = await workspacesApi.get(wsId)
     editName.value = ws.value.name
-    editConfig.value = JSON.stringify(ws.value.context_config ?? {}, null, 2)
+    loadCtxCfg()
+    loadModelCfg()
     repos.value = (await workspacesApi.listRepos(wsId)).items
     chats.value = (await workspacesApi.listChats(wsId)).items
     mountedSkills.value = (await workspacesApi.listMountedSkills(wsId)).items
@@ -81,16 +177,9 @@ async function fetchDetail() {
 
 // Overview
 async function saveOverview() {
-  let config: Record<string, unknown> | null = null
-  try {
-    config = JSON.parse(editConfig.value)
-  } catch {
-    ElMessage.error('context_config 不是有效的 JSON')
-    return
-  }
   savingOverview.value = true
   try {
-    await workspacesApi.patch(wsId, { name: editName.value, context_config: config })
+    await workspacesApi.patch(wsId, { name: editName.value })
     showSuccess('保存成功')
     await fetchDetail()
   } finally {
@@ -259,6 +348,8 @@ watch(activeTab, async (tab) => {
     await loadAgentMd()
   } else if (tab === 'chats' && feishuApps.value.length === 0) {
     feishuApps.value = (await feishuAppsApi.list()).items
+  } else if (tab === 'model-config' && modelList.value.length === 0) {
+    modelList.value = await modelsApi.list()
   }
 })
 
@@ -283,11 +374,94 @@ onMounted(fetchDetail)
           <el-form-item label="所有者">
             <span>{{ ws.owner_name || `#${ws.owner_id}` }}</span>
           </el-form-item>
-          <el-form-item label="Context Config">
-            <el-input v-model="editConfig" type="textarea" :rows="10" style="font-family: monospace" />
-          </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="savingOverview" @click="saveOverview">保存</el-button>
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
+
+      <!-- Context Config (P3 D-CE.5) -->
+      <el-tab-pane label="上下文配置" name="context-config">
+        <el-form label-width="140px" style="max-width: 680px" v-if="ws">
+          <el-form-item label="启用上下文管理">
+            <el-switch v-model="ctxCfg.enabled" />
+          </el-form-item>
+          <el-form-item label="L1 Clearing 阈值">
+            <el-slider v-model="ctxCfg.trigger1" :min="0" :max="0.95" :step="0.05" show-input />
+            <div style="color: var(--el-text-color-secondary); font-size: 12px;">token 超过 context_window 的此比例 → 触发 L1 clearing（替换旧 tool_result）</div>
+          </el-form-item>
+          <el-form-item label="L2 Compaction 阈值">
+            <el-slider v-model="ctxCfg.trigger2" :min="0" :max="0.95" :step="0.05" show-input />
+            <div style="color: var(--el-text-color-secondary); font-size: 12px;">token 超过此比例 → 触发 L2 compaction（旧历史压成摘要）</div>
+          </el-form-item>
+          <el-form-item label="L1 保留 tool_result">
+            <el-input-number v-model="ctxCfg.clear_keep" :min="1" :max="50" />
+          </el-form-item>
+          <el-form-item label="L2 保留轮数">
+            <el-input-number v-model="ctxCfg.compact_recent" :min="1" :max="50" />
+          </el-form-item>
+          <el-form-item label="L2 递归分段摘要">
+            <el-switch v-model="ctxCfg.compact_recursive" />
+            <div style="color: var(--el-text-color-secondary); font-size: 12px;">开启后前缀超摘要窗口 60% 时分段递归摘要（上限 3 层），防长 Run L4 报错</div>
+          </el-form-item>
+          <el-form-item label="摘要 Provider">
+            <el-select v-model="ctxCfg.summary_provider" style="width: 200px">
+              <el-option label="Anthropic" value="anthropic" />
+              <el-option label="OpenAI 兼容" value="openai_compatible" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="摘要 Model">
+            <el-input v-model="ctxCfg.summary_model" placeholder="留空用 provider 默认 model" />
+          </el-form-item>
+          <el-form-item label="跨 session 摘要预算">
+            <el-slider v-model="ctxCfg.summary_budget_pct" :min="0" :max="0.5" :step="0.05" show-input />
+            <div style="color: var(--el-text-color-secondary); font-size: 12px;">占 context_window 的百分比，用于加载历史 session 摘要</div>
+          </el-form-item>
+          <el-form-item label="排除工具">
+            <el-select v-model="ctxCfg.exclude_tools" multiple filterable allow-create default-first-option placeholder="L1 不清的工具名" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="摘要指令">
+            <el-input v-model="ctxCfg.compact_instructions" type="textarea" :rows="6" />
+            <el-button text size="small" @click="ctxCfg.compact_instructions = DEFAULT_CONTEXT_CONFIG.compact_instructions" style="margin-top: 4px">重置默认</el-button>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="savingCtxCfg" @click="saveCtxCfg">保存配置</el-button>
+            <el-button @click="resetCtxCfg">重置全部默认</el-button>
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
+
+      <!-- Model Config (P3 D-CE.6) -->
+      <el-tab-pane label="模型配置" name="model-config">
+        <el-form label-width="140px" style="max-width: 680px" v-if="ws">
+          <el-form-item label="Provider">
+            <el-select v-model="modelCfg.provider" style="width: 200px">
+              <el-option label="Anthropic" value="anthropic" />
+              <el-option label="OpenAI 兼容" value="openai_compatible" />
+            </el-select>
+            <div style="color: var(--el-text-color-secondary); font-size: 12px;">留空字段走全局 settings 默认值</div>
+          </el-form-item>
+          <el-form-item label="Model">
+            <el-input v-model="modelCfg.model" placeholder="如 claude-sonnet-5-20250710 / glm-4.6 / deepseek-v4-flash" list="model-list" />
+            <datalist id="model-list">
+              <option v-for="m in modelList" :key="m.name" :value="m.name">
+                {{ m.context_window > 0 ? `${(m.context_window / 1000).toFixed(0)}K ctx` : '' }}
+              </option>
+            </datalist>
+            <div v-if="modelList.length" style="color: var(--el-text-color-secondary); font-size: 12px;">
+              已知 {{ modelList.length }} 个 model，可从下拉列表选择或手动输入
+            </div>
+          </el-form-item>
+          <el-form-item v-if="modelCfg.provider === 'openai_compatible'" label="API Base URL">
+            <el-input v-model="modelCfg.api_base_url" placeholder="如 https://open.bigmodel.cn/api/paas/v4" />
+          </el-form-item>
+          <el-form-item label="API Key">
+            <el-input v-model="apiKeyInput" type="password" show-password :placeholder="hasApiKey ? '已设置，输入新值覆盖' : '可选，留空走全局 key'" />
+            <div v-if="hasApiKey" style="color: var(--el-color-success); font-size: 12px;">✓ 已配置独立 API Key</div>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="savingModelCfg" @click="saveModelCfg">保存配置</el-button>
+            <el-button @click="resetModelCfg">清空表单</el-button>
           </el-form-item>
         </el-form>
       </el-tab-pane>

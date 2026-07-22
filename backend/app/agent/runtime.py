@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context_config import ContextConfig
+from app.agent.model_config import ModelConfig
 from app.config import settings
 from app.db.models import GitRepo, Workspace
 from app.feishu.client import FeishuClient
@@ -34,13 +35,28 @@ log = logging.getLogger("agent.runtime")
 McpCleanup = Callable[[], Awaitable[None]] | None
 
 
-def make_provider() -> Provider:
-    """构造主 LLM Provider。
+def make_provider(ws_model_config: dict | None = None) -> Provider:
+    """构造主 LLM Provider（P3 D-CE.6: 支持 per-WS model_config 覆盖全局）。
 
-    - 配了 ``openai_compatible_*`` 三项 → 国内模型（智谱/通义/DeepSeek/Moonshot 等），
-      支持无 Anthropic key 的部署（design D3 多模型备选）。
-    - 否则 → Anthropic（key 缺失时 Provider 仍返回，stream 时失败）。
+    优先级：WS ``model_config`` > 全局 ``settings.openai_compatible_*`` > Anthropic。
+    - WS 配了 ``model_config`` → 按其 provider/model/api_key/base_url 构造
+    - 否则配了 ``openai_compatible_*`` 三项 → 国内模型
+    - 否则 → Anthropic（key 缺失时 Provider 仍返回，stream 时失败）
     """
+    mc = ModelConfig.from_ws(ws_model_config)
+    if mc is not None:
+        if mc.provider in ("openai_compatible", "glm"):
+            return OpenAICompatibleProvider(
+                model=mc.model or settings.openai_compatible_model,
+                base_url=mc.api_base_url or settings.openai_compatible_base_url or None,
+                api_key=mc.api_key or settings.openai_compatible_api_key or None,
+            )
+        # anthropic 或未知 → Anthropic
+        return AnthropicProvider(
+            model=mc.model or None,
+            api_key=mc.api_key or None,
+        )
+    # 无 WS 配置 → 走全局 settings（原行为）
     if (
         settings.openai_compatible_api_key
         and settings.openai_compatible_base_url

@@ -46,12 +46,19 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
 def _ws_out(ws: Workspace, owner_name: str = "") -> WorkspaceOut:
+    # P3 D-CE.6: model_config 不回显 api_key_enc，仅返回 has_model_api_key 布尔
+    mc = dict(ws.model_config) if ws.model_config else None
+    has_key = bool(mc and mc.get("api_key_enc"))
+    if mc:
+        mc.pop("api_key_enc", None)
     return WorkspaceOut(
         id=ws.id,
         name=ws.name,
         owner_id=ws.owner_id,
         owner_name=owner_name or "",
         context_config=ws.context_config,
+        model_cfg=mc,
+        has_model_api_key=has_key,
         cwd_repo_id=ws.cwd_repo_id,
     )
 
@@ -147,6 +154,24 @@ async def patch_workspace(
         ws.name = body.name
     if body.context_config is not None:
         ws.context_config = body.context_config
+    if body.model_cfg is not None:
+        # P3 D-CE.6: 加密 api_key 后存 DB；空串 = 清除已有 key
+        from app.agent.model_config import ModelConfig
+        from app.core.security import encrypt_secret
+
+        mc_data = dict(body.model_cfg)
+        raw_key = mc_data.pop("api_key", None)
+        existing = dict(ws.model_config) if ws.model_config else {}
+        if raw_key:
+            mc_data["api_key_enc"] = encrypt_secret(raw_key)
+        elif "api_key" in body.model_cfg:
+            # 显式传空串 → 清除已有 key
+            mc_data.pop("api_key_enc", None)
+        else:
+            # 未传 api_key 字段 → 保留已有加密 key
+            if "api_key_enc" in existing:
+                mc_data["api_key_enc"] = existing["api_key_enc"]
+        ws.model_config = mc_data or None
     await db.commit()
     await db.refresh(ws)
     return _ws_out(ws, owner_name=user.username)

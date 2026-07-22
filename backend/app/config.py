@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     openai_compatible_base_url: str = ""  # 如 https://open.bigmodel.cn/api/paas/v4
     openai_compatible_model: str = ""  # 如 glm-4.6 / qwen-plus / deepseek-chat
 
+    # P3 D-CE.4: model 元数据覆盖（JSON 字符串），用于新 model 上线无需发版
+    # 例：{"my-custom-model":{"context_window":32000,"max_output_tokens":4096}}
+    model_overrides: str = ""
+
     # 子代理并行度上限（design D33：防 fork 爆炸，超限排队）
     agent_max_concurrency: int = 5
 

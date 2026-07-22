@@ -1,6 +1,6 @@
 """管理后台共享 Pydantic schema。"""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserOut(BaseModel):
@@ -55,16 +55,24 @@ class WorkspaceCreateIn(BaseModel):
 
 
 class WorkspacePatchIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     name: str | None = Field(default=None, max_length=128)
     context_config: dict | None = None
+    # P3 D-CE.6: per-WS 模型配置（Pydantic 保留 model_config，用 alias 绕过）
+    model_cfg: dict | None = Field(default=None, alias="model_config")
 
 
 class WorkspaceOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: int
     name: str
     owner_id: int
     owner_name: str = ""
     context_config: dict | None
+    model_cfg: dict | None = Field(default=None, alias="model_config")  # 不含 api_key_enc
+    has_model_api_key: bool = False  # 前端展示用
     cwd_repo_id: int | None
 
 

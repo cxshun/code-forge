@@ -3,7 +3,8 @@
 用 httpx 打**任意** OpenAI Chat Completions 兼容端点（智谱 GLM / 通义千问 / DeepSeek /
 Moonshot / 本地 vLLM 等），不引入 openai SDK、**不绑定具体厂商**。``base_url`` /
 ``api_key`` / ``model`` 由 ``settings.openai_compatible_*`` 注入，三项齐配才启用。
-compaction 摘要用 ``chat``（非流式）；token 计数字符估算（design.md:869）。
+compaction 摘要用 ``chat``（非流式）；token 计数优先用 tiktoken，不可用则字符估算
+（design D-CE.3，fallback 到 len//4）。
 
 design.md:312 「Provider 层必须支持国内模型（**如** GLM）作为备选」——GLM 是举例，
 本 Provider 把它泛化为「任意 OpenAI 兼容服务」，避免厂商锁定。
@@ -28,6 +29,20 @@ log = logging.getLogger("providers.openai_compatible")
 
 _FALLBACK_CTX = 128_000
 _BLOCKED_ERR = "provider unavailable"
+
+# tiktoken 可选依赖（design D-CE.3）：未安装时 fallback 到 len//4 字符估算
+try:
+    import tiktoken as _tiktoken
+except ImportError:
+    _tiktoken = None
+
+
+def _pick_encoding(model: str) -> str:
+    """按 model 名选 tiktoken encoding（design D-CE.3）。"""
+    m = (model or "").lower()
+    if m.startswith(("gpt-4o", "gpt-4.1", "o1", "o3", "o4")):
+        return "o200k_base"
+    return "cl100k_base"
 
 
 def _to_openai_messages(messages: list[Message], system: str | None) -> list[dict]:
@@ -91,12 +106,20 @@ class OpenAICompatibleProvider(Provider):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
-        context_window: int = _FALLBACK_CTX,
+        context_window: int | None = None,
     ) -> None:
         key = api_key or settings.openai_compatible_api_key
         base = (base_url or settings.openai_compatible_base_url or "").rstrip("/")
         mdl = model or settings.openai_compatible_model
-        self._ctx_window = context_window
+        # P3 D-CE.4: 优先用显式传入的 context_window，其次 ModelRegistry 查，最后 fallback
+        if context_window is not None:
+            self._ctx_window = context_window
+        elif mdl:
+            from app.providers.registry import get_model_meta
+            meta = get_model_meta(mdl)
+            self._ctx_window = meta.context_window if meta else _FALLBACK_CTX
+        else:
+            self._ctx_window = _FALLBACK_CTX
         if not key or not base or not mdl:
             log.warning(
                 "openai_compatible_* 未完整配置（需 api_key + base_url + model）；Provider 不可用"
@@ -105,11 +128,24 @@ class OpenAICompatibleProvider(Provider):
             self._api_key = ""
             self._base_url = ""
             self._model = mdl or ""
+            self._enc = None
             return
         self._available = True
         self._api_key = key
         self._base_url = base
         self._model = mdl
+        # tiktoken encoding 缓存（design D-CE.3）：按 model 选 encoding，失败则 None
+        self._enc = self._load_encoding(mdl)
+
+    @staticmethod
+    def _load_encoding(model: str) -> "object | None":
+        if _tiktoken is None:
+            return None
+        try:
+            return _tiktoken.get_encoding(_pick_encoding(model))
+        except Exception:
+            log.warning("tiktoken get_encoding(%s) failed; fallback to len//4", model, exc_info=True)
+            return None
 
     @property
     def context_window(self) -> int:
@@ -267,7 +303,12 @@ class OpenAICompatibleProvider(Provider):
     async def count_tokens(
         self, messages: list[Message], system: str | None = None
     ) -> Usage:
-        # 字符估算（design.md:869：国内模型用 tokenizer 或字符估算）
-        total = sum(len(m.content or "") // 4 for m in messages)
-        total += len(system or "") // 4
+        # design D-CE.3: 优先 tiktoken 精确计数，不可用则字符估算（len//4）
+        if self._enc is None:
+            total = sum(len(m.content or "") // 4 for m in messages)
+            total += len(system or "") // 4
+            return Usage(input_tokens=total, output_tokens=0)
+        enc = self._enc
+        total = sum(len(enc.encode(m.content or "")) for m in messages)
+        total += len(enc.encode(system or ""))
         return Usage(input_tokens=total, output_tokens=0)

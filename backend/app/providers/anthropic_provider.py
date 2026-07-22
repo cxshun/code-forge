@@ -75,11 +75,16 @@ class AnthropicProvider(Provider):
         if not key:
             log.warning("anthropic_api_key 未设置; Provider 在 chat/stream 时会失败")
             self._available = False
+            self._model = model or settings.anthropic_model or _DEFAULT_MODEL
+            self._ctx_window = _FALLBACK_CTX
             return
         self._available = True
         self._client = anthropic.AsyncAnthropic(api_key=key)
         self._model = model or settings.anthropic_model or _DEFAULT_MODEL
-        self._ctx_window = _FALLBACK_CTX
+        # P3 D-CE.4: 从 ModelRegistry 查真实窗口大小，未知 model 走 fallback
+        from app.providers.registry import get_model_meta
+        meta = get_model_meta(self._model)
+        self._ctx_window = meta.context_window if meta else _FALLBACK_CTX
 
     @property
     def context_window(self) -> int:

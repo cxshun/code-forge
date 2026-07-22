@@ -339,7 +339,7 @@ async def test_e2e_handler_to_run_with_cards(monkeypatch):
     )
 
     mock_provider = MockProvider(mock_text="hello from agent")
-    monkeypatch.setattr(handler_module, "make_provider", lambda: mock_provider)
+    monkeypatch.setattr(handler_module, "make_provider", lambda *a, **kw: mock_provider)
 
     content = json.dumps({"text": '<at user_id="ou_bot">bot</at> 你好'})
     event = {

@@ -132,6 +132,10 @@ async def test_handle_submits_run_with_callbacks(monkeypatch):
 
 async def test_handle_no_anthropic_key_sends_error_card(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
+    # 同时清除 openai_compatible 配置，模拟无任何 LLM Provider 可用的场景
+    monkeypatch.setattr(settings, "openai_compatible_api_key", "")
+    monkeypatch.setattr(settings, "openai_compatible_base_url", "")
+    monkeypatch.setattr(settings, "openai_compatible_model", "")
     await _seed()
     fake_client = _FakeClient()
     monkeypatch.setattr(handler_module, "FeishuClient", lambda *a, **k: fake_client)

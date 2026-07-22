@@ -6,7 +6,7 @@
 from app.db.models.alert_rule import AlertRule, RuleType
 from app.db.models.feishu_app import FeishuApp
 from app.db.models.mcp import MCP
-from app.db.models.session_run import Run, RunStatus, Session
+from app.db.models.session_run import Run, RunStatus, Session, SessionSummary
 from app.db.models.skill import Skill, Visibility
 from app.db.models.span import Span, SpanStatus, SpanType
 from app.db.models.task import Task, TaskStatus
@@ -31,6 +31,7 @@ __all__ = [
     "Run",
     "RunStatus",
     "Session",
+    "SessionSummary",
     "Skill",
     "Span",
     "SpanStatus",

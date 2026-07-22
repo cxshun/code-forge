@@ -23,12 +23,14 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.agent.context import ContextManager
+from app.agent.context_config import ContextConfig
 from app.agent.lock import WsLock
 from app.agent.loop import RunContext, run_loop
 from app.agent.prompt import build_system_prompt
+from app.agent.session_summary import submit_summary_task
 from app.config import settings
 from app.core.redis_client import redis as redis_client
-from app.db.models import Run, RunStatus, Session
+from app.db.models import Run, RunStatus, Session, SessionSummary, Workspace
 from app.db.session import async_session_factory
 from app.memory.loader import load_context_injections
 from app.observability.buffer import span_buffer
@@ -67,58 +69,119 @@ def save_session_jsonl(
 
 
 async def load_chat_history(
-    ws_id: int, feishu_chat_id: int, current_session_id: int
+    ws_id: int,
+    feishu_chat_id: int,
+    current_session_id: int,
+    context_window: int = 0,
 ) -> list[Message]:
-    """加载该 chat 最近一次已完成 session 的消息历史（跨 session 上下文）。
+    """加载跨 session 上下文历史（P3 D-CE.1 滑动窗口）。
 
-    从 JSONL 读取，过滤 tool_result 与 tool_calls（跨 session 无用且可能触发
-    Provider 配对校验错误），取最近 N 条（``chat_history_max_messages``）。
+    返回 ``[摘要前缀（若有钱）] + [最近 1 session JSONL 原文]``，供 _execute_run
+    与当前 user message 拼接。摘要前缀按 token 预算（``context_window *
+    summary_budget_pct``）从 ``session_summaries`` 取最近 N 条。
     """
     try:
-        async with async_session_factory() as db:
-            stmt = (
-                select(Session.id)
-                .join(Run, Run.session_id == Session.id)
-                .where(
-                    Session.feishu_chat_id == feishu_chat_id,
-                    Session.id != current_session_id,
-                    Run.status == RunStatus.completed.value,
-                )
-                .order_by(Session.id.desc())
-                .limit(1)
-            )
-            prev_sid = await db.scalar(stmt)
-        if prev_sid is None:
-            return []
-        f = _sessions_dir(ws_id, feishu_chat_id) / f"{prev_sid}.jsonl"
-        if not f.exists():
-            return []
-        messages: list[Message] = []
-        with f.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                row = json.loads(line)
-                if row.get("role") == "tool_result":
-                    continue
-                content = row.get("content")
-                if not content:
-                    continue
-                msgs_kwargs: dict = {"role": row["role"], "content": content}
-                if row["role"] == "assistant" and row.get("reasoning"):
-                    msgs_kwargs["reasoning"] = row["reasoning"]
-                messages.append(Message(**msgs_kwargs))
-        limit = settings.chat_history_max_messages
-        if len(messages) > limit:
-            messages = messages[-limit:]
-        return messages
+        summary_prefix = await _load_summary_prefix(
+            ws_id, feishu_chat_id, current_session_id, context_window
+        )
+        jsonl_msgs = await _load_recent_session_jsonl(ws_id, feishu_chat_id, current_session_id)
+        if summary_prefix:
+            return [summary_prefix] + jsonl_msgs
+        return jsonl_msgs
     except Exception:
         log.warning(
             "load_chat_history failed: ws=%s chat=%s", ws_id, feishu_chat_id,
             exc_info=True,
         )
         return []
+
+
+async def _load_summary_prefix(
+    ws_id: int, feishu_chat_id: int, current_session_id: int, context_window: int
+) -> Message | None:
+    """按 token 预算取最近 N 条 session_summaries，拼成单条 user 消息。"""
+    async with async_session_factory() as db:
+        ws = await db.get(Workspace, ws_id)
+        if ws is None:
+            return None
+        cfg = ContextConfig.from_ws(ws.context_config)
+        if not cfg.enabled or cfg.summary_budget_pct <= 0:
+            return None
+        budget = int(context_window * cfg.summary_budget_pct) if context_window > 0 else 0
+        # 按 session.id DESC 取摘要（排除当前 session），累加 token_count ≤ budget
+        stmt = (
+            select(SessionSummary, Session.id.label("sid"))
+            .join(Session, Session.id == SessionSummary.session_id)
+            .where(
+                Session.feishu_chat_id == feishu_chat_id,
+                SessionSummary.session_id != current_session_id,
+            )
+            .order_by(Session.id.desc())
+        )
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            return None
+        picked: list[str] = []
+        total = 0
+        for row in rows:
+            ss = row[0]
+            if budget > 0 and total + ss.token_count > budget:
+                break
+            picked.append(ss.summary_text)
+            total += ss.token_count
+        if not picked:
+            return None
+        # 时间顺序：旧 → 新（便于模型理解对话进展）
+        picked.reverse()
+        text = "\n\n---\n\n".join(picked)
+        return Message(
+            role="user",
+            content=f"[历史会话摘要（{len(picked)} 个 session，{total} tokens）]\n\n{text}",
+        )
+
+
+async def _load_recent_session_jsonl(
+    ws_id: int, feishu_chat_id: int, current_session_id: int
+) -> list[Message]:
+    """读最近 1 个已完成 session 的 JSONL 原文（过滤 tool_result）。"""
+    async with async_session_factory() as db:
+        stmt = (
+            select(Session.id)
+            .join(Run, Run.session_id == Session.id)
+            .where(
+                Session.feishu_chat_id == feishu_chat_id,
+                Session.id != current_session_id,
+                Run.status == RunStatus.completed.value,
+            )
+            .order_by(Session.id.desc())
+            .limit(1)
+        )
+        prev_sid = await db.scalar(stmt)
+    if prev_sid is None:
+        return []
+    f = _sessions_dir(ws_id, feishu_chat_id) / f"{prev_sid}.jsonl"
+    if not f.exists():
+        return []
+    messages: list[Message] = []
+    with f.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if row.get("role") == "tool_result":
+                continue
+            content = row.get("content")
+            if not content:
+                continue
+            msgs_kwargs: dict = {"role": row["role"], "content": content}
+            if row["role"] == "assistant" and row.get("reasoning"):
+                msgs_kwargs["reasoning"] = row["reasoning"]
+            messages.append(Message(**msgs_kwargs))
+    limit = settings.chat_history_max_messages
+    if len(messages) > limit:
+        messages = messages[-limit:]
+    return messages
 
 
 async def _set_run_status(
@@ -202,7 +265,9 @@ async def _execute_run(
                 skill_descriptions,
                 feishu_chat_id=feishu_chat_id,
             )
-            history = await load_chat_history(ws_id, feishu_chat_id, session_id)
+            history = await load_chat_history(
+                ws_id, feishu_chat_id, session_id, provider.context_window
+            )
             ctx = RunContext(
                 system=system,
                 messages=history + [Message(role="user", content=user_message)],
@@ -224,6 +289,8 @@ async def _execute_run(
 
             save_session_jsonl(ws_id, feishu_chat_id, session_id, ctx.messages)
             await _set_run_status(run_id, RunStatus.completed.value)
+            # P3 D-CE.1: 异步生成 session 摘要（不阻塞返回，失败仅 log）
+            submit_summary_task(session_id, ws_id, feishu_chat_id)
             return final
 
     except InterruptedError as e:

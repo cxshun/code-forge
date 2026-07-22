@@ -32,7 +32,11 @@ class Workspace(Base, TimestampMixin):
     cwd_repo_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # WS 级上下文管理策略（D34）：enabled / trigger1 / trigger2 / clear_keep /
     # compact_recent / summary_provider / summary_model / compact_instructions / exclude_tools
+    # P3 新增：summary_budget_pct / compact_recursive
     context_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # WS 级模型配置（P3 D-CE.6）：provider / model / api_base_url / api_key_enc
+    # None / 空 → fallback 到 settings 全局
+    model_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class FeishuChat(Base, TimestampMixin):

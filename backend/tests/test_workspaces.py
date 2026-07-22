@@ -92,7 +92,8 @@ async def test_delete_cascade_and_task_poll():
         assert (await ac.get("/api/admin/workspaces")).json()["total"] == 0
 
 
-async def test_delete_with_mount_rejected():
+async def test_delete_with_mount_cascade():
+    """F3.2.5: WS 删除不再因 mount 被 422 拒绝，而是 CASCADE 级联清理（202）。"""
     admin = await _seed()
     async with _client() as ac:
         await ac.post("/api/auth/login", json=ADMIN)
@@ -107,7 +108,7 @@ async def test_delete_with_mount_rejected():
             s.add(WorkspaceSkill(workspace_id=ws_id, skill_id=sk.id))
             await s.commit()
         r = await ac.delete(f"/api/admin/workspaces/{ws_id}")
-        assert r.status_code == 422
+        assert r.status_code == 202
 
 
 async def test_non_owner_forbidden():

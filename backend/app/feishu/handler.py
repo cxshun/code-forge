@@ -163,7 +163,7 @@ async def handle_message(
         ws_id = chat.workspace_id
         feishu_chat_id = chat.id
         ws = await db.get(Workspace, ws_id)
-        provider = make_provider()
+        provider = make_provider(ws.model_config)
         registry, skill_descriptions, mcp_cleanup = await build_registry(db, ws_id, provider)
         cwd = await resolve_cwd(db, ws)
         ctx_cfg = ContextConfig.from_ws(ws.context_config)

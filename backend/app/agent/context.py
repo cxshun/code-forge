@@ -111,6 +111,9 @@ class ContextManager:
 
         分段：保留最后 ``compact_recent`` 个 tool_result 及其配对 tool_use 起的全部后缀；
         前缀（结束于完整回合，不会留下孤立 tool_use）整体替换为一条摘要 user 消息。
+
+        P3 D-CE.2: 若 ``cfg.compact_recursive`` 且前缀 token > 摘要窗口 60%，
+        分段递归摘要（上限 3 层）；否则回退 MVP 单次摘要。
         """
         cfg = self._cfg
         tr_indices = [i for i, m in enumerate(messages) if m.role == "tool_result"]
@@ -128,16 +131,14 @@ class ContextManager:
             return {"compacted": False}  # 前缀为空，无可压
         prefix = messages[:keep_from]
         suffix = messages[keep_from:]
-        try:
-            summary_msgs, _ = await self._summary_provider.chat(
-                messages=prefix, system=cfg.compact_instructions
-            )
-        except Exception:
-            log.warning("L2 compaction summary call failed; skip", exc_info=True)
-            return {"compacted": False}
-        summary_text = (summary_msgs[0].content or "").strip() if summary_msgs else ""
+
+        if cfg.compact_recursive:
+            summary_text = await self._recursive_compact(prefix, depth=0)
+        else:
+            summary_text = await self._single_summary(prefix)
         if not summary_text:
             return {"compacted": False}
+
         summary_msg = Message(role="user", content=f"[历史摘要]\n{summary_text}")
         # in-place 替换（调用方持有的 list 对象不变）
         messages.clear()
@@ -148,6 +149,112 @@ class ContextManager:
             "kept_rounds": cfg.compact_recent,
             "summary_len": len(summary_text),
         }
+
+    async def _single_summary(self, messages: list[Message]) -> str | None:
+        """MVP 单次摘要（原行为，D-CE.2 关闭时走此路径）。"""
+        try:
+            summary_msgs, _ = await self._summary_provider.chat(
+                messages=messages, system=self._cfg.compact_instructions
+            )
+        except Exception:
+            log.warning("L2 compaction summary call failed; skip", exc_info=True)
+            return None
+        return (summary_msgs[0].content or "").strip() if summary_msgs else ""
+
+    async def _recursive_compact(
+        self, messages: list[Message], depth: int = 0
+    ) -> str | None:
+        """D-CE.2 递归分段摘要。
+
+        - 前缀 ≤ 摘要窗口 60% → 单次摘要（base case）
+        - 前缀 > 60% → 按回合分段（每段 ≤ 60% 窗口），逐段摘要后合并
+        - 合并后 > 80% 窗口 → 再递归一层（depth+1）
+        - 递归上限 3 层；超过取当前结果 + 截断提示
+        """
+        cfg = self._cfg
+        summary_window = self._summary_provider.context_window
+        seg_budget = int(summary_window * 0.6)
+
+        # 粗估前缀 token（同步 len//4，避免 async 调用开销）
+        prefix_tokens = sum(len(m.content or "") // 4 for m in messages)
+
+        # Base case: 前缀够小，或已达递归上限
+        if prefix_tokens <= seg_budget or depth >= 3:
+            text = await self._single_summary(messages)
+            if text and depth >= 3:
+                text = text + "\n\n[递归上限已达，早期历史可能被截断]"
+            return text
+
+        # 分段摘要
+        segments = self._split_by_turns(messages, seg_budget)
+        seg_summaries: list[str] = []
+        for i, seg in enumerate(segments):
+            try:
+                sm, _ = await self._summary_provider.chat(
+                    messages=seg, system=cfg.compact_instructions
+                )
+                text = (sm[0].content or "").strip() if sm else ""
+                seg_summaries.append(text if text else self._truncate_segment(seg))
+            except Exception:
+                log.warning("L2 segment %d summary failed; truncate", i, exc_info=True)
+                seg_summaries.append(self._truncate_segment(seg))
+
+        merged = "\n\n---\n\n".join(seg_summaries)
+        if not merged.strip():
+            return None
+
+        # 合并后仍超 80% 窗口 → 再递归
+        merged_tokens = len(merged) // 4
+        if merged_tokens > summary_window * 0.8 and depth < 2:
+            recursive_result = await self._recursive_compact(
+                [Message(role="user", content=merged)], depth + 1
+            )
+            return recursive_result or merged
+
+        return merged
+
+    @staticmethod
+    def _split_by_turns(
+        messages: list[Message], budget: int
+    ) -> list[list[Message]]:
+        """按回合分段，每段粗估 token ≤ budget。边界对齐到完整回合。"""
+        segments: list[list[Message]] = []
+        current: list[Message] = []
+        current_tokens = 0
+        i = 0
+        while i < len(messages):
+            # 一个回合 = user 消息到下一个 user 消息之前（含中间 assistant/tool_result）
+            turn_end = i + 1
+            while turn_end < len(messages) and messages[turn_end].role != "user":
+                turn_end += 1
+            turn = messages[i:turn_end]
+            turn_tokens = sum(len(m.content or "") // 4 for m in turn)
+            if current and current_tokens + turn_tokens > budget:
+                segments.append(current)
+                current = list(turn)
+                current_tokens = turn_tokens
+            else:
+                current.extend(turn)
+                current_tokens += turn_tokens
+            i = turn_end
+        if current:
+            segments.append(current)
+        return segments
+
+    @staticmethod
+    def _truncate_segment(seg: list[Message]) -> str:
+        """单段摘要失败时的降级：保留首尾各 500 字符 + 中段省略提示。"""
+        parts: list[str] = []
+        total = 0
+        for m in seg:
+            c = m.content or ""
+            parts.append(c)
+            total += len(c)
+        if total <= 1000:
+            return "\n".join(parts)
+        head = "\n".join(parts)[:500]
+        tail = "\n".join(parts)[-500:]
+        return f"{head}\n\n[中段省略]\n\n{tail}"
 
     def _clear_old_tool_results(self, messages: list[Message]) -> int:
         """L1：保留最近 ``clear_keep`` 个 tool_result，其余 content 替换占位。
