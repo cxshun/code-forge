@@ -244,7 +244,7 @@ backend/
 │   │   └── skill.py            # skill__{name} 按需加载（D16）
 │   ├── workspace/              # M4 工作空间管理
 │   │   ├── manager.py          # WS 创建 / 目录骨架 / 级联删除
-│   │   ├── git.py              # HTTPS clone / 同步 / Bash git 边界（D6 / D35）
+│   │   ├── git.py              # Git clone（SSH 推荐 / HTTPS+token 可选）/ 同步 / Bash git 边界（D6 / D35）
 │   │   └── fs.py               # 目录工具 + resolve 校验（D17）
 │   ├── memory/                 # chat memory 读写（D18 / D22）
 │   ├── observability/          # M8
@@ -323,11 +323,13 @@ frontend/
 - **隔离方式**：路径前缀校验，工作空间之间互不可见
 - **不提供**：CPU / 内存 / 网络限制
 
-### D6: 项目代码来源 = 多 Repo + HTTPS clone（无 OAuth）
+### D6: 项目代码来源 = 多 Repo + Git clone（SSH 推荐 / HTTPS 可选，无 OAuth）
 
 - **关系**：1 WS : N GitRepo，用户自选数量（0~N）
 - **理由**：简化认证流程；多 repo 支持微服务 / 前后端等场景
-- **支持**：可选 token 用于私有仓库
+- **鉴权方式**：
+  - **SSH URL（推荐）**：`git@host:group/repo.git`，走本机 SSH key 鉴权，无需 token；部署场景用 Deploy Key（每 repo 独立）
+  - **HTTPS URL（可选）**：私有 repo 可注入 token 到 URL userinfo（`x-access-token:token@host`），token 加密落 DB（D33 / NF4.2.4），不入日志；UI 默认折叠为「高级选项」
 - **Agent cwd**：默认在第一个挂载 repo 的根目录（`repos/{repo_id}/`，详见 D24）；MVP 单 repo 内活动，工具用相对路径即可，不跨 repo
 - **跨 repo 操作**：MVP 不支持，Agent 在单 repo 内活动
 

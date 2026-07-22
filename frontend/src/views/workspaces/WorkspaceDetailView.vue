@@ -318,11 +318,18 @@ onMounted(fetchDetail)
         <el-dialog v-model="repoDialogVisible" title="挂载 Git Repo" width="480">
           <el-form label-width="60px">
             <el-form-item label="URL">
-              <el-input v-model="repoForm.url" placeholder="https://github.com/user/repo.git" />
+              <el-input v-model="repoForm.url" placeholder="git@github.com:user/repo.git（推荐 SSH）" />
             </el-form-item>
-            <el-form-item label="Token">
-              <el-input v-model="repoForm.token" placeholder="可选，私有 repo" show-password />
-            </el-form-item>
+            <el-collapse>
+              <el-collapse-item title="高级选项（HTTPS 私有 repo token）" name="token">
+                <el-form-item label="Token">
+                  <el-input v-model="repoForm.token" placeholder="可选，仅 HTTPS 私有 repo 需要" show-password />
+                  <div style="color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6;">
+                    推荐使用 SSH URL（<code>git@host:group/repo.git</code>），通过本机 SSH key 鉴权，无需 token。
+                  </div>
+                </el-form-item>
+              </el-collapse-item>
+            </el-collapse>
           </el-form>
           <template #footer>
             <el-button @click="repoDialogVisible = false">取消</el-button>
