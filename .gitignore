@@ -29,3 +29,9 @@ data/
 # Serve script runtime (serve.sh)
 .serve-pids/
 .serve-logs/
+.dev-logs/
+.dev-pids/
+
+backend/.cf-backend.log
+backend/.cf_cookie.txt
+backend/uv.lock

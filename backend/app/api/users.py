@@ -60,28 +60,32 @@ async def patch_user(
     user_id: int,
     body: UserPatchIn,
     db: AsyncSession = Depends(get_db),
-    current: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     user = await db.get(User, user_id)
     if user is None:
         raise api_error(404, "用户不存在")
     if body.role is not None and body.role != user.role:
-        # 降级保护：仅 admin → user 时拦截（user → admin 升级无风险）。
-        # 禁止降级自己、禁止降级最后一个管理员，避免管理后台被自锁。
         is_demotion = (
             user.role == UserRole.admin.value
             and body.role == UserRole.user.value
         )
         if is_demotion:
-            if user_id == current.id:
+            if user_id == admin.id:
                 raise api_error(400, "不能降级自己的管理员角色")
-            admin_count = await db.scalar(
-                select(func.count(User.id)).where(User.role == UserRole.admin.value)
+            other_admins = await db.scalar(
+                select(func.count()).select_from(User).where(
+                    User.role == UserRole.admin.value,
+                    User.status == UserStatus.active.value,
+                    User.id != user_id,
+                )
             )
-            if admin_count is not None and admin_count <= 1:
-                raise api_error(400, "系统至少需要保留一个管理员")
+            if not other_admins:
+                raise api_error(400, "不能降级最后一个管理员")
         user.role = body.role
-    if body.status is not None:
+    if body.status is not None and body.status != user.status:
+        if user_id == admin.id:
+            raise api_error(400, "不能停用自己的账号")
         user.status = body.status
     await db.commit()
     await db.refresh(user)

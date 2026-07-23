@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import RepoCreateIn, RepoOut
 from app.core.deps import require_user, require_ws_owner
 from app.core.errors import api_error
-from app.core.security import encrypt_secret
+from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models import CloneStatus, GitRepo, Task, User, Workspace
 from app.db.session import get_db
 from app.tasks.runner import task_runner
@@ -100,6 +100,33 @@ async def sync_repo_endpoint(
     await db.refresh(task)
     task_runner.submit(task.id, sync_repo(repo.id))
     return {"task_id": task.id}
+
+
+@router.post("/{ws_id}/repos/{repo_id}:retry", status_code=202)
+async def retry_repo(
+    repo_id: int,
+    ws: Workspace = Depends(require_ws_owner),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_user),
+):
+    repo = await db.get(GitRepo, repo_id)
+    if repo is None or repo.workspace_id != ws.id:
+        raise api_error(404, "Repo 不存在")
+    if repo.clone_status not in (CloneStatus.failed.value, CloneStatus.pending.value):
+        raise api_error(409, "仅 failed/pending 状态可重试")
+    target = workspace_root(ws.id) / "repos" / str(repo_id)
+    if target.exists():
+        shutil.rmtree(target)
+    repo.clone_status = CloneStatus.pending.value
+    repo.last_error = None
+    await db.commit()
+    token = decrypt_secret(repo.token_enc) if repo.token_enc else None
+    task = Task(task_type="git_clone", owner_id=user.id)
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    task_runner.submit(task.id, clone_repo(repo.id, repo.url, token, ws.id))
+    return {"repo_id": repo.id, "task_id": task.id}
 
 
 @router.delete("/{ws_id}/repos/{repo_id}", status_code=204)

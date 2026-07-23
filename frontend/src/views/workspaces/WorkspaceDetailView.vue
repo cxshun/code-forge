@@ -134,6 +134,10 @@ const repoForm = ref({ url: '', token: '' })
 const repoLoading = ref(false)
 const { task: repoTask, isDone: repoTaskDone, start: startRepoPoll } = useTaskPolling()
 
+async function refreshRepos() {
+  repos.value = (await workspacesApi.listRepos(wsId)).items
+}
+
 // Chats
 const chats = ref<ChatOut[]>([])
 const chatAppId = ref('')
@@ -202,7 +206,8 @@ async function onAddRepo() {
     showSuccess('Clone 任务已提交')
     repoDialogVisible.value = false
     repoForm.value = { url: '', token: '' }
-    startRepoPoll(res.task_id)
+    await refreshRepos()
+    startRepoPoll(res.task_id, refreshRepos)
   } finally {
     repoLoading.value = false
   }
@@ -212,7 +217,18 @@ async function onSyncRepo(repo: RepoOut) {
   try {
     const res = await workspacesApi.syncRepo(wsId, repo.id)
     showSuccess('同步任务已提交')
-    startRepoPoll(res.task_id)
+    startRepoPoll(res.task_id, refreshRepos)
+  } catch {
+    // handled
+  }
+}
+
+async function onRetryRepo(repo: RepoOut) {
+  try {
+    const res = await workspacesApi.retryRepo(wsId, repo.id)
+    showSuccess('重试任务已提交')
+    await refreshRepos()
+    startRepoPoll(res.task_id, refreshRepos)
   } catch {
     // handled
   }
@@ -223,7 +239,7 @@ async function onDeleteRepo(repo: RepoOut) {
   if (!ok) return
   await workspacesApi.deleteRepo(wsId, repo.id)
   showSuccess('已删除')
-  repos.value = (await workspacesApi.listRepos(wsId)).items
+  await refreshRepos()
 }
 
 // Chats
@@ -357,6 +373,10 @@ function cloneStatusType(status: string) {
   return { ready: 'success', cloning: 'warning', failed: 'danger', pending: 'info' }[status] || 'info'
 }
 
+function cloneStatusLabel(status: string) {
+  return { ready: '就绪', cloning: '克隆中', failed: '失败', pending: '等待中' }[status] || status
+}
+
 onMounted(fetchDetail)
 </script>
 
@@ -475,15 +495,24 @@ onMounted(fetchDetail)
         </div>
         <el-table :data="repos">
           <el-table-column prop="url" label="URL" min-width="200" />
-          <el-table-column label="状态" width="100">
+          <el-table-column label="状态" width="120">
             <template #default="{ row }">
-              <el-tag :type="cloneStatusType(row.clone_status)">{{ row.clone_status }}</el-tag>
+              <el-tag :type="cloneStatusType(row.clone_status)" :effect="row.clone_status === 'ready' ? 'light' : 'plain'">
+                <el-icon v-if="row.clone_status === 'pending' || row.clone_status === 'cloning'" class="is-loading" style="margin-right: 2px">
+                  <Loading />
+                </el-icon>
+                {{ cloneStatusLabel(row.clone_status) }}
+              </el-tag>
+              <el-tooltip v-if="row.clone_status === 'failed' && row.last_error" :content="row.last_error" placement="bottom" :show-after="300">
+                <el-icon style="margin-left: 4px; color: var(--el-color-danger); cursor: help"><WarningFilled /></el-icon>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column prop="local_path" label="路径" width="150" />
-          <el-table-column label="操作" width="160" align="center">
+          <el-table-column label="操作" width="200" align="center">
             <template #default="{ row }">
-              <el-button text @click="onSyncRepo(row)">同步</el-button>
+              <el-button text :disabled="row.clone_status !== 'ready'" @click="onSyncRepo(row)">同步</el-button>
+              <el-button v-if="row.clone_status === 'failed'" text type="warning" @click="onRetryRepo(row)">重试</el-button>
               <el-button text type="danger" @click="onDeleteRepo(row)">删除</el-button>
             </template>
           </el-table-column>

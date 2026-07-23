@@ -10,11 +10,13 @@ export function useTaskPolling() {
   const error = ref<string | null>(null)
 
   let timer: ReturnType<typeof setTimeout> | null = null
+  let tickCb: (() => void) | null = null
 
   async function poll(taskId: number) {
     try {
       const t = await tasksApi.get(taskId)
       task.value = t
+      tickCb?.()
       if (t.status === 'done') {
         isDone.value = true
         isRunning.value = false
@@ -42,15 +44,17 @@ export function useTaskPolling() {
       clearTimeout(timer)
       timer = null
     }
+    tickCb = null
   }
 
-  function start(taskId: number) {
+  function start(taskId: number, onTick?: () => void) {
     cleanup()
     isRunning.value = true
     isDone.value = false
     isFailed.value = false
     error.value = null
     task.value = null
+    tickCb = onTick ?? null
     poll(taskId)
   }
 

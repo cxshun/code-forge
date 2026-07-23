@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { usersApi } from '@/api/users'
+import { useUserStore } from '@/stores/user'
 import { confirmDelete, showSuccess } from '@/composables/useConfirmAction'
 import type { UserOut } from '@/types/user'
+
+const userStore = useUserStore()
+const currentUserId = computed(() => userStore.user?.id)
 
 const users = ref<UserOut[]>([])
 const loading = ref(false)
@@ -112,8 +116,8 @@ onMounted(fetchList)
       </el-table-column>
       <el-table-column label="操作" width="280" align="center">
         <template #default="{ row }">
-          <el-button text size="small" @click="toggleRole(row)">切换角色</el-button>
-          <el-button text size="small" @click="toggleStatus(row)">
+          <el-button text size="small" :disabled="row.id === currentUserId" @click="toggleRole(row)">切换角色</el-button>
+          <el-button text size="small" :disabled="row.id === currentUserId" @click="toggleStatus(row)">
             {{ row.status === 'active' ? '停用' : '启用' }}
           </el-button>
           <el-button text size="small" type="warning" @click="openReset(row)">重置密码</el-button>

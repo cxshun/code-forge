@@ -46,6 +46,9 @@ export const workspacesApi = {
   syncRepo(wsId: number, repoId: number) {
     return http.post<unknown, { task_id: number }>(`${BASE}/${wsId}/repos/${repoId}:sync`)
   },
+  retryRepo(wsId: number, repoId: number) {
+    return http.post<unknown, { repo_id: number; task_id: number }>(`${BASE}/${wsId}/repos/${repoId}:retry`)
+  },
   deleteRepo(wsId: number, repoId: number) {
     return http.delete<unknown, void>(`${BASE}/${wsId}/repos/${repoId}`)
   },
