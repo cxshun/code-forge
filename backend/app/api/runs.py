@@ -10,6 +10,7 @@ ws_id 取自路径并校验归属（D31），run 须属该 WS。
 """
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -24,6 +25,7 @@ from app.db.session import get_db
 from app.workspace.fs import workspace_root
 
 router = APIRouter(prefix="/workspaces", tags=["runs"])
+log = logging.getLogger("api.runs")
 
 
 def _run_out(r: Run) -> RunOut:
@@ -96,6 +98,7 @@ async def cancel_run(
     if run is None or run.workspace_id != ws.id:
         raise api_error(404, "Run 不存在")
     ok = await run_queue.cancel(run_id)
+    log.info("cancel run %d: %s", run_id, "ok" if ok else "not queued")
     return {"run_id": run_id, "cancelled": ok}
 
 
@@ -109,4 +112,5 @@ async def interrupt_run(
     if run is None or run.workspace_id != ws.id:
         raise api_error(404, "Run 不存在")
     ok = await run_queue.interrupt(run_id)
+    log.info("interrupt run %d: %s", run_id, "ok" if ok else "not running")
     return {"run_id": run_id, "interrupted": ok}

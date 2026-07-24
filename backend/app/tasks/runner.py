@@ -14,11 +14,14 @@
 """
 
 import asyncio
+import logging
 
 from sqlalchemy import update
 
 from app.db.models import Task, TaskStatus
 from app.db.session import async_session_factory
+
+log = logging.getLogger("tasks.runner")
 
 
 class TaskRunner:
@@ -35,6 +38,7 @@ class TaskRunner:
 
         async def _run() -> None:
             await self._update(task_id, status=TaskStatus.running.value)
+            log.info("task %d: running", task_id)
             try:
                 result = await coro
                 await self._update(
@@ -43,10 +47,12 @@ class TaskRunner:
                     progress=1.0,
                     result=result,
                 )
+                log.info("task %d: done", task_id)
             except Exception as e:
                 await self._update(
                     task_id, status=TaskStatus.failed.value, error=str(e)[:1000]
                 )
+                log.error("task %d: failed: %s", task_id, str(e)[:300])
 
         self._bg[task_id] = asyncio.create_task(_run())
 
@@ -65,7 +71,10 @@ class TaskRunner:
                 )
             )
             await s.commit()
-            return result.rowcount or 0
+            count = result.rowcount or 0
+            if count:
+                log.warning("recovered %d orphaned tasks (marked failed)", count)
+            return count
 
 
 task_runner = TaskRunner()

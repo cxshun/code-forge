@@ -93,6 +93,10 @@ class ContextManager:
 
         # L4 硬兜底
         if after_l2 > hard:
+            log.error(
+                "context L4 hard limit: %d > %d (95%% of %d) after L1+L2; abort",
+                after_l2, hard, window,
+            )
             raise ContextLimitError(
                 f"context still {after_l2} > {hard} (95% of {window}) after "
                 f"clearing/compaction; abort run"

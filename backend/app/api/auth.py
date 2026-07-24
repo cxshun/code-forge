@@ -10,6 +10,8 @@ from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import logging
+
 from app.api.schemas import ChangePasswordIn, LoginIn, UserOut, WorkspaceBrief
 from app.config import settings
 from app.core.deps import SESSION_COOKIE, client_ip, get_current_user
@@ -21,6 +23,7 @@ from app.db.models import User, UserStatus, Workspace
 from app.db.session import get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+log = logging.getLogger("api.auth")
 
 
 def _user_out(user: User) -> UserOut:
@@ -38,6 +41,7 @@ async def login(
 ):
     ip = client_ip(request)
     if not await check_login_rate(redis_client, ip):
+        log.warning("login rate-limited: ip=%s user=%s", ip, body.username)
         raise api_error(429, "登录尝试过于频繁，请稍后再试", "rate_limited")
 
     user = await db.scalar(select(User).where(User.username == body.username))
@@ -46,7 +50,7 @@ async def login(
         or user.status != UserStatus.active.value
         or not verify_password(body.password, user.password_hash)
     ):
-        # 统一错误信息，避免用户名枚举
+        log.warning("login failed: ip=%s user=%s", ip, body.username)
         raise api_error(401, "用户名或密码错误")
 
     token = await create_session(redis_client, user.id)
@@ -58,6 +62,7 @@ async def login(
         secure=settings.is_prod,
         max_age=SESSION_TTL,
     )
+    log.info("login success: user=%s id=%d ip=%s", user.username, user.id, ip)
     return {"user": _user_out(user)}
 
 
@@ -68,6 +73,7 @@ async def logout(
 ):
     await delete_session(redis_client, token)
     response.delete_cookie(SESSION_COOKIE)
+    log.info("logout")
     return {"ok": True}
 
 
@@ -94,7 +100,9 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
 ):
     if not verify_password(body.old_password, user.password_hash):
+        log.warning("change-password failed: wrong old password, user=%s", user.username)
         raise api_error(401, "原密码错误")
     user.password_hash = hash_password(body.new_password)
     await db.commit()
+    log.info("change-password success: user=%s", user.username)
     return {"ok": True}

@@ -164,6 +164,7 @@ class RunQueue:
         ar = _ActiveRun(run_id, ws_id, session_id, params, on_queue, on_start)
         self._active[run_id] = ar
         ar.task = asyncio.create_task(self._drive(ar), name=f"run-{run_id}")
+        log.info("run %d enqueued: ws=%s ahead=%d", run_id, ws_id, ahead)
 
         # 锁有竞争时推"排队中"卡片（rank==0 将立即起跑，由 on_start 反馈）
         if ahead > 0:

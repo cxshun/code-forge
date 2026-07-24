@@ -1,9 +1,12 @@
 """Edit 工具：精确字符串替换（D17 路径限定）。"""
 
+import logging
 from typing import ClassVar
 
 from app.tools.base import Tool, ToolContext
 from app.tools.path_guard import resolve_tool_path
+
+log = logging.getLogger("tools.edit")
 
 
 class EditTool(Tool):
@@ -40,4 +43,6 @@ class EditTool(Tool):
             return f"Error: {count} matches of old_string; set replace_all=true"
         new_text = text.replace(old, new) if replace_all else text.replace(old, new, 1)
         path.write_text(new_text, encoding="utf-8")
-        return f"replaced {count if replace_all else 1} occurrence(s) in {rel}"
+        done = count if replace_all else 1
+        log.info("edit: %s (%d occurrence(s))", rel, done)
+        return f"replaced {done} occurrence(s) in {rel}"

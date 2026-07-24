@@ -71,6 +71,8 @@ class WsLock:
                 log.info("lock acquired ws=%s holder=%s", self._ws_id, self._holder)
                 return True
             if deadline is None or time.monotonic() >= deadline:
+                if deadline is not None:
+                    log.warning("lock acquire timeout ws=%s holder=%s", self._ws_id, self._holder)
                 return False
             await asyncio.sleep(0.2)
 

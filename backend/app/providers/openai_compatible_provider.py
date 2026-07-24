@@ -47,10 +47,16 @@ def _pick_encoding(model: str) -> str:
 
 def _to_openai_messages(messages: list[Message], system: str | None) -> list[dict]:
     """转 OpenAI chat 格式（system 单独置顶 + user/assistant/tool 交替）。"""
+    last_assistant_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].role == "assistant":
+            last_assistant_idx = i
+            break
+
     out: list[dict] = []
     if system:
         out.append({"role": "system", "content": system})
-    for m in messages:
+    for i, m in enumerate(messages):
         if m.role == "tool_result":
             out.append(
                 {
@@ -64,8 +70,11 @@ def _to_openai_messages(messages: list[Message], system: str | None) -> list[dic
             # thinking 模型（deepseek-v4-flash）的 reasoning_content 在多轮中必须回传给 API。
             # 即使本轮模型未产生思考内容（如纯 tool_call 轮），字段也必须存在（空串），
             # 否则 DeepSeek 会返回 400: "reasoning_content must be passed back to the API"
+            # 但只需保留最近一轮的 reasoning，历史轮的替换为空串以节省 context。
             if m.role == "assistant":
-                msg["reasoning_content"] = m.reasoning or ""
+                msg["reasoning_content"] = (
+                    m.reasoning if i == last_assistant_idx else ""
+                )
             if m.tool_calls:
                 msg["tool_calls"] = [
                     {

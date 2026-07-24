@@ -49,7 +49,7 @@ _BUILTIN_REGISTRY: dict[str, ModelMeta] = {
     # DeepSeek
     "deepseek-chat": ModelMeta(context_window=64_000, max_output_tokens=8_192),
     "deepseek-reasoner": ModelMeta(context_window=64_000, max_output_tokens=32_768),
-    "deepseek-v4-flash": ModelMeta(context_window=1_000_000, max_output_tokens=8_192),
+    "deepseek-v4-flash": ModelMeta(context_window=64_000, max_output_tokens=8_192),
     # 通义千问
     "qwen-plus": ModelMeta(context_window=131_072, max_output_tokens=8_192),
     "qwen-turbo": ModelMeta(context_window=1_000_000, max_output_tokens=8_192),

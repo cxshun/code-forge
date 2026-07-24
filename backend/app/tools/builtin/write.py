@@ -1,9 +1,12 @@
 """Write 工具：写文件（D17 路径限定，D20 写工具 → Run 层持锁内执行）。"""
 
+import logging
 from typing import ClassVar
 
 from app.tools.base import Tool, ToolContext
 from app.tools.path_guard import resolve_tool_path
+
+log = logging.getLogger("tools.write")
 
 
 class WriteTool(Tool):
@@ -27,4 +30,5 @@ class WriteTool(Tool):
         path.parent.mkdir(parents=True, exist_ok=True)
         content = input["content"]
         path.write_text(content, encoding="utf-8")
+        log.info("write: %s (%d chars)", rel, len(content))
         return f"wrote {len(content)} chars to {rel}"

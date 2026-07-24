@@ -6,10 +6,13 @@
 """
 
 import asyncio
+import logging
 from typing import ClassVar
 
 from app.tools.base import Tool, ToolContext
 from app.tools.path_guard import cwd_root
+
+log = logging.getLogger("tools.bash")
 
 # D35：写 / 网络 git 子命令黑名单（只读 git 允许：status/diff/log/show/branch/blame）
 _GIT_BLOCKED = (
@@ -55,9 +58,11 @@ class BashTool(Tool):
         command = input["command"]
         blocked = _check_git_boundary(command)
         if blocked:
+            log.warning("blocked git command: %s", command[:100])
             return blocked
 
         cwd = str(cwd_root(ctx))
+        log.info("bash: %s (cwd=%s)", command[:200], cwd)
         try:
             proc = await asyncio.create_subprocess_exec(
                 "sh",
@@ -68,11 +73,13 @@ class BashTool(Tool):
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as e:
+            log.error("bash: cannot spawn shell: %s", e)
             return f"Error: cannot spawn shell: {e}"
 
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT_S)
         except TimeoutError:
+            log.warning("bash: timeout after %ds: %s", _TIMEOUT_S, command[:100])
             proc.kill()
             await proc.wait()
             return f"Error: command timed out after {_TIMEOUT_S}s"
@@ -84,4 +91,5 @@ class BashTool(Tool):
             parts.append(out_text)
         if err_text.strip():
             parts.append(f"[stderr]\n{err_text}")
+        log.info("bash: exit=%d out=%d chars", proc.returncode, len(out_text))
         return "\n".join(parts)

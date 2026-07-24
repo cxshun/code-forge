@@ -7,6 +7,7 @@
 - DELETE /workspaces/{ws_id}/repos/{repo_id}：移除（删目录 + DB）
 """
 
+import logging
 import shutil
 
 from fastapi import APIRouter, Depends, Response
@@ -23,6 +24,7 @@ from app.workspace.fs import workspace_root
 from app.workspace.git import clone_repo, sync_repo
 
 router = APIRouter(prefix="/workspaces", tags=["repos"])
+log = logging.getLogger("api.repos")
 
 
 def _repo_out(r: GitRepo) -> RepoOut:
@@ -69,6 +71,7 @@ async def create_repo(
     await db.commit()
     await db.refresh(task)
     task_runner.submit(task.id, clone_repo(repo.id, body.url, body.token, ws.id))
+    log.info("create repo %d: ws=%s task=%d url=%s", repo.id, ws.id, task.id, body.url[:80])
     return {"repo_id": repo.id, "task_id": task.id}
 
 
@@ -99,6 +102,7 @@ async def sync_repo_endpoint(
     await db.commit()
     await db.refresh(task)
     task_runner.submit(task.id, sync_repo(repo.id))
+    log.info("sync repo %d: ws=%s task=%d", repo_id, ws.id, task.id)
     return {"task_id": task.id}
 
 
@@ -126,6 +130,7 @@ async def retry_repo(
     await db.commit()
     await db.refresh(task)
     task_runner.submit(task.id, clone_repo(repo.id, repo.url, token, ws.id))
+    log.info("retry repo %d: ws=%s task=%d", repo_id, ws.id, task.id)
     return {"repo_id": repo.id, "task_id": task.id}
 
 

@@ -185,9 +185,11 @@ async def run_loop(
     - 超过 MAX_TOOL_ROUNDS → 抛 RuntimeError（F3.3.11）
     """
     tools_defs = registry.defs() if registry else []
+    log.info("loop start: %d tools registered", len(tools_defs))
 
     for round_idx in range(MAX_TOOL_ROUNDS):
         if ctx.abort.is_set():
+            log.info("loop aborted at round %d", round_idx + 1)
             raise InterruptedError("interrupted at round start")
 
         # 上下文管理（D34）：每轮前跑四道防线（L1 clearing / L4 兜底）
@@ -200,6 +202,7 @@ async def run_loop(
         ctx.messages.append(assistant)
 
         if not tool_calls:
+            log.info("loop done: %d rounds, no more tool calls", round_idx + 1)
             return assistant.content or ""
 
         if registry is None:
@@ -225,4 +228,5 @@ async def run_loop(
             sum(1 for tc in tool_calls if not registry.is_readonly(tc["name"])),
         )
 
+    log.warning("loop exceeded max tool rounds (%d)", MAX_TOOL_ROUNDS)
     raise RuntimeError(f"exceeded max tool rounds ({MAX_TOOL_ROUNDS})")

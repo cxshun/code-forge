@@ -42,6 +42,8 @@ from app.workspace.fs import workspace_root
 
 log = logging.getLogger("agent.run")
 
+_SUMMARY_BUDGET_CAP = 16_000
+
 
 def _sessions_dir(ws_id: int, feishu_chat_id: int) -> Path:
     return workspace_root(ws_id) / "chats" / str(feishu_chat_id) / "sessions"
@@ -108,6 +110,7 @@ async def _load_summary_prefix(
         if not cfg.enabled or cfg.summary_budget_pct <= 0:
             return None
         budget = int(context_window * cfg.summary_budget_pct) if context_window > 0 else 0
+        budget = min(budget, _SUMMARY_BUDGET_CAP)
         # 按 session.id DESC 取摘要（排除当前 session），累加 token_count ≤ budget
         stmt = (
             select(SessionSummary, Session.id.label("sid"))
@@ -175,8 +178,6 @@ async def _load_recent_session_jsonl(
             if not content:
                 continue
             msgs_kwargs: dict = {"role": row["role"], "content": content}
-            if row["role"] == "assistant" and row.get("reasoning"):
-                msgs_kwargs["reasoning"] = row["reasoning"]
             messages.append(Message(**msgs_kwargs))
     limit = settings.chat_history_max_messages
     if len(messages) > limit:
@@ -191,6 +192,7 @@ async def _set_run_status(
         r = await db.get(Run, run_id)
         if r is None:
             return
+        prev = r.status
         r.status = status
         if error is not None:
             r.error = error[:1000]
@@ -199,6 +201,10 @@ async def _set_run_status(
         else:
             r.ended_at = datetime.now(UTC)
         await db.commit()
+    if error:
+        log.info("run %d: %s → %s (%s)", run_id, prev, status, error[:200])
+    else:
+        log.info("run %d: %s → %s", run_id, prev, status)
 
 
 async def _create_run(
@@ -251,6 +257,7 @@ async def _execute_run(
     ``flush_trace`` 确保 span 入库 → ``clear_trace`` 清理。
     """
     await _set_run_status(run_id, RunStatus.running.value, started=True)
+    log.info("run %d started: ws=%s session=%d model=%s", run_id, ws_id, session_id, provider.model)
 
     trace_ctx = init_trace(ws_id, feishu_chat_id, session_id, run_id)
     try:
@@ -289,6 +296,10 @@ async def _execute_run(
 
             save_session_jsonl(ws_id, feishu_chat_id, session_id, ctx.messages)
             await _set_run_status(run_id, RunStatus.completed.value)
+            log.info(
+                "run %d completed: %d msgs, %d chars reply",
+                run_id, len(ctx.messages), len(final or ""),
+            )
             # P3 D-CE.1: 异步生成 session 摘要（不阻塞返回，失败仅 log）
             submit_summary_task(session_id, ws_id, feishu_chat_id)
             return final
@@ -333,6 +344,7 @@ async def start_run(
     # 抢 WS 写锁（D20）
     lock = WsLock(redis_client, ws_id)
     if not await lock.acquire(timeout_s=lock_timeout_s):
+        log.warning("run %d: lock acquire timeout (ws=%s, %ss)", run_id, ws_id, lock_timeout_s)
         await _set_run_status(run_id, RunStatus.error.value, error="lock acquire timeout")
         raise RuntimeError("lock acquire timeout")
 
