@@ -35,7 +35,7 @@
 | # | 缺口 | 影响 | 对应决策 |
 |---|---|---|---|
 | 1 | 只看最近 1 session | 隔天上下文断 | D-CE.1 滑动窗口 |
-| 2 | L2 单次摘要超窗口静默失败 | 长 Run 频繁 L4 报错 | D-CE.2 递归摘要 |
+| 2 | L2 摘要无预算约束，超窗口静默失败 | 长 Run 频繁 L4 报错 | D-CE.2 递归摘要 + 预算感知 |
 | 3 | OpenAI 系 token 估算误差 ±30% | L1/L2 触发时机偏 | D-CE.3 tiktoken |
 | 4 | context_window 硬编码 | 换 model 阈值不准 | D-CE.4 ModelRegistry |
 
@@ -62,7 +62,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  Loop 内每轮工具调用前                                       │
 │   └─ ContextManager.manage(messages)（L1-L4 编排不变）       │
-│       └─ L2 _compact 改为递归摘要（D-CE.2）                  │
+│       └─ L2 _compact 改为预算感知递归摘要（D-CE.2）          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,27 +100,36 @@
   - 不做跨 chat 摘要共享（摘要按 feishu_chat_id 隔离）
 - **理由**：file-based 摘要查询效率低且无法按 token 预算动态截取；DB 表便于 `ORDER BY id DESC LIMIT N` + `token_count` 累加
 
-### D-CE.2: L2 递归摘要
+### D-CE.2: L2 递归摘要（预算感知）
 
-- **规则**：L2 compaction 触发时，若前缀 token > 摘要模型窗口的 60%，分段递归摘要
+- **规则**：L2 compaction 触发时，计算目标 token 预算 `target = window * summary_target_pct`（默认 40%）。suffix 最多占 `target * 60%`，超出则递减 `compact_recent`；剩余预算给摘要。若前缀 token > 段预算，分段递归摘要
+- **预算分配**：
+  ```
+  target = window * summary_target_pct          # 默认 0.4
+  suffix_budget = target * 0.6                  # suffix 最多占 60%
+  # 从 compact_recent 递减，直到 suffix_tokens ≤ suffix_budget 或降为 0
+  summary_budget = max(800, target - suffix_tokens)
+  ```
 - **分段策略**：
   ```
-  seg_budget = summary_window * 0.6   # 每段预算（留 40% 给指令+输出）
+  seg_budget = min(summary_window * 0.6, max_tokens * 3)
   segments = split_by_turns(prefix, seg_budget)
   # 分段边界对齐到完整回合（不切断 tool_use/tool_result 对）
-  seg_summaries = [summary_provider.chat(seg) for seg in segments]
+  seg_max = min(4096, max_tokens)
+  seg_summaries = [summary_provider.chat(seg, max_tokens=seg_max) for seg in segments]
   merged = "\n\n---\n\n".join(seg_summaries)
-  if token_count(merged) > summary_window * 0.8:
-      return recursive_compact(merged, depth+1)  # 再递归一层
+  if token_count(merged) > max_tokens:
+      if depth < 2: return recursive_compact(merged, depth+1, max_tokens)
+      else: return single_summary(merged, max_tokens)  # 最终收敛
   return merged
   ```
-- **递归上限**：3 层。超过则取当前结果 + 截断提示 `[递归上限已达，早期历史可能被截断]`
+- **max_tokens 传递**：`Provider.chat()` / `stream()` 接受 `max_tokens: int | None = None`；默认 None 回退 4096。摘要调用时传入 `summary_budget` 约束 LLM 输出；`compact_instructions` 末尾追加长度提示
+- **递归上限**：3 层。超过则做最终收敛（对 merged 做一次 single_summary 压到目标），再不行取当前结果 + 截断提示
 - **单段失败**：该段降级为截断（保留首 500 + 尾 500 字符 + `[中段省略]`），不整体 skip
-- **分段实现**：遍历 messages，按回合（user/assistant 一对）累加 token，达到 seg_budget 就切一段
 - **不做的事**：
   - 不做并行分段摘要（分段间无依赖，但 LLM 调用并发控制复杂，MVP 串行）
   - 不做分段摘要缓存（同一段在不同 Run 里可能被再次摘要，但频次低，不值得缓存）
-- **理由**：单次摘要失败的根本原因是前缀 > 摘要窗口；分段后每段必然 ≤ 60% 窗口，保证不超
+- **理由**：原实现摘要大小无约束，段摘要简单拼接后可能远超主模型窗口；预算感知后 suffix 自动缩减、摘要 max_tokens 约束输出、最终收敛保证总大小可控
 
 ### D-CE.3: tiktoken 集成（OpenAI 兼容 provider 精确计数）
 
@@ -171,13 +180,12 @@
 - **不做的事**：
   - 不做 DB 表（model 列表相对稳定，DB 增加运维成本）
   - 不做运行时动态查询（不调 OpenAI / Anthropic API 拉 model 列表，避免网络依赖）
-  - 不改 `max_tokens=4096` 硬编码（P3 二期再考虑用 `max_output`）
 - **理由**：硬编码导致切 model 时 L1/L2 阈值偏离设计；registry 是纯内存 dict，零运维成本
 
 ### D-CE.5: ContextConfig 管理后台 UI
 
 - **规则**：WorkspaceDetailView 新增「上下文管理」tab，表单化编辑 `ContextConfig`，替代当前 Overview tab 里的 raw JSON textarea（`editConfig`）
-- **表单字段**（对应 `ContextConfig` 全部 11 项）：
+- **表单字段**（对应 `ContextConfig` 全部 12 项）：
 
   | 字段 | 控件 | 范围 / 选项 | 说明 |
   |---|---|---|---|
@@ -192,6 +200,7 @@
   | `exclude_tools` | tag input | 工具名列表 | L1 不清的工具 |
   | `summary_budget_pct` | slider | 0-0.5（步进 0.05） | 跨 session 摘要预算（P3 新增） |
   | `compact_recursive` | switch | on/off | L2 递归摘要开关（P3 新增） |
+  | `summary_target_pct` | slider | 0.1-0.6（步进 0.05） | L2 compaction 目标 token 占窗口百分比（P3 新增） |
 
 - **前端校验**（保存前）：
   - `trigger1 < trigger2 < 0.95`
@@ -270,12 +279,13 @@
 
 ## 3. ContextConfig 扩展
 
-`ContextConfig`（`context_config.py`）新增 2 个字段：
+`ContextConfig`（`context_config.py`）新增 3 个字段：
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `summary_budget_pct` | float | 0.25 | 跨 session 摘要占 context_window 的预算百分比 |
 | `compact_recursive` | bool | True | L2 是否启用递归摘要（False 回退 MVP 单次摘要行为） |
+| `summary_target_pct` | float | 0.4 | L2 compaction 后目标 token 占 context_window 百分比（含 suffix） |
 
 其余字段（`trigger1` / `trigger2` / `clear_keep` / `compact_recent` / `summary_provider` / `summary_model` / `compact_instructions` / `exclude_tools`）不变。
 
@@ -287,16 +297,16 @@
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Agent Loop
+    participant Agent as Agent Loop
     participant Run as run.py
     participant TaskRunner as task_runner
     participant Summary as summary worker
     participant DB as DB
 
-    Loop->>Run: Run 完成
+    Agent->>Run: Run 完成
     Run->>Run: status=completed, save JSONL
     Run->>TaskRunner: submit(generate_session_summary, session_id)
-    Run-->>Loop: 返回（不阻塞）
+    Run-->>Agent: 返回（不阻塞）
 
     TaskRunner->>Summary: 异步执行
     Summary->>DB: 查 session 的 JSONL 路径
@@ -313,7 +323,7 @@ sequenceDiagram
     participant Run as run.py
     participant DB as DB
     participant FS as 文件系统
-    participant Loop as Agent Loop
+    participant Agent as Agent Loop
 
     Run->>DB: 查最近 N 个 session_summaries（token 预算内）
     DB-->>Run: [summary_M, ..., summary_1]
@@ -324,24 +334,31 @@ sequenceDiagram
     Run->>FS: 读 {prev_sid}.jsonl
     FS-->>Run: 原文 messages（过滤 tool_result）
 
-    Run->>Loop: messages=[摘要] + [原文] + [当前 user]
-    Loop->>Loop: ContextManager.manage(messages)
+    Run->>Agent: messages=[摘要] + [原文] + [当前 user]
+    Agent->>Agent: ContextManager.manage(messages)
 ```
 
-### 4.3 L2 递归摘要
+### 4.3 L2 递归摘要（预算感知）
 
 ```mermaid
 flowchart TD
-    A["L2 触发：token > trigger2"] --> B{"前缀 token > 摘要窗口 60% ?"}
-    B -->|否| C["单次摘要（MVP 行为）"]
-    B -->|是| D["分段：按回合累加，每段 ≤ 60% 窗口"]
-    D --> E["串行调 summary_provider 生成段摘要"]
-    E --> F{"段摘要合并后 > 80% 窗口 ?"}
-    F -->|是| G{"递归层数 < 3 ?"}
+    A["L2 触发：token 超 trigger2"] --> T["计算 target = window * summary_target_pct"]
+    T --> S["suffix 预算 = target * 60%"]
+    S --> SR{"suffix token 超预算?"}
+    SR -->|是| SRD["递减 compact_recent，重新 split"]
+    SRD --> SR
+    SR -->|否| SB["summary_budget = target - suffix_tokens"]
+    SB --> B{"前缀 token 超段预算?"}
+    B -->|否| C["单次摘要（max_tokens=summary_budget）"]
+    B -->|是| D["分段：按回合累加，每段 ≤ 段预算"]
+    D --> E["串行调 summary_provider（max_tokens=seg_max）生成段摘要"]
+    E --> F{"段摘要合并后超 summary_budget?"}
+    F -->|是| G{"递归层数未达 2?"}
     G -->|是| D
-    G -->|否| H["截断 + 提示"]
+    G -->|否| H["最终收敛：single_summary(merged, max_tokens)"]
     F -->|否| I["返回合并摘要"]
     C --> I
+    H --> I
 ```
 
 ---
@@ -353,16 +370,16 @@ flowchart TD
 | `backend/app/db/models/workspace.py` | 新增 `model_config` JSONB 字段 | per-WS 模型配置（D-CE.6） |
 | `backend/app/db/models/session_run.py` | 新增 `SessionSummary` model | 1:1 附属 sessions，ON DELETE CASCADE |
 | `backend/alembic/versions/xxx_add_session_summaries.py` | 新 migration | 建 `session_summaries` 表 + `workspaces.model_config` 列 |
-| `backend/app/agent/context_config.py` | 新增 2 字段 | `summary_budget_pct` / `compact_recursive` |
+| `backend/app/agent/context_config.py` | 新增 3 字段 | `summary_budget_pct` / `compact_recursive` / `summary_target_pct` |
 | `backend/app/agent/model_config.py` | 新建 | `ModelConfig.from_ws()` 容错解析（对齐 `ContextConfig.from_ws`） |
-| `backend/app/agent/context.py` | `_compact` 改造 | 支持递归分段摘要 |
+| `backend/app/agent/context.py` | `_compact` 改造 | 预算感知 compaction + 递归分段摘要 + max_tokens 传递 + 最终收敛 |
 | `backend/app/agent/run.py` | `load_chat_history` 重写 + provider 调用点传 `ws.model_config` | 滑动窗口 + per-WS provider |
 | `backend/app/agent/session_summary.py` | 新建 | `generate_session_summary` 异步任务 |
 | `backend/app/agent/runtime.py` | `make_provider()` 改造 | 接受 `ws_model_config` 参数，优先 WS 配置 |
 | `backend/app/providers/registry.py` | 新建 | `MODEL_REGISTRY` + `ModelMeta` + `/api/models` 建议 |
-| `backend/app/providers/openai_compatible_provider.py` | `count_tokens` 改造 + 构造接受 `api_key` / `base_url` | tiktoken 优先 + per-WS 配置 |
-| `backend/app/providers/anthropic_provider.py` | `context_window` 改造 + 构造接受 `model` / `api_key` | 从 registry 查 + per-WS 配置 |
-| `backend/app/providers/base.py` | `Provider.__init__` 接受 model_name | 用于 registry 查询 |
+| `backend/app/providers/openai_compatible_provider.py` | `count_tokens` 改造 + 构造接受 `api_key` / `base_url` + `chat`/`stream` 加 `max_tokens` | tiktoken 优先 + per-WS 配置 + 摘要预算约束 |
+| `backend/app/providers/anthropic_provider.py` | `context_window` 改造 + 构造接受 `model` / `api_key` + `chat`/`stream` 加 `max_tokens` | 从 registry 查 + per-WS 配置 + 摘要预算约束 |
+| `backend/app/providers/base.py` | `Provider.__init__` 接受 model_name + `chat`/`stream` 签名加 `max_tokens` | 用于 registry 查询 + 摘要预算传递 |
 | `backend/app/api/workspaces.py` | `PATCH` 接受 `model_config`；`GET` 返回 `has_api_key` | 不回显明文 key |
 | `backend/app/api/models.py` | 新建 | `GET /api/models` 返回 `MODEL_REGISTRY` 列表供前端 datalist |
 | `backend/tests/test_context.py` | 新建 | L1/L2/递归摘要单元测试 |
@@ -384,6 +401,8 @@ flowchart TD
   - L2 递归摘要（前缀 > 60% 窗口）—— 分段数 / 合并结果 / 层数
   - 递归上限 3 层 —— 超限截断
   - 单段失败降级 —— 截断保留首尾
+  - `max_tokens` 传递验证 —— 摘要调用收到预算约束（CE-T11 新增）
+  - 大 suffix 自动缩减 `compact_recent` —— 预算感知验证（CE-T11 新增）
 
 - **`test_session_summary.py`**（新建）：
   - `generate_session_summary` 正常路径 —— 生成 + 落 DB
@@ -432,6 +451,8 @@ flowchart TD
   - 缓解：optional dependency，缺失时 fallback；Docker 镜像预装
 - **递归摘要延迟**：长对话 L2 触发时多段串行调用
   - 缓解：段数通常 ≤ 3，单段摘要 < 5s，总延迟 < 15s 可接受；如需并行留 P4
+- **压缩后仍超 L4 硬限**：原实现摘要无预算约束，段摘要拼接后可能远超主模型窗口
+  - 缓解：CE-T11 预算感知 compaction —— `summary_target_pct` 约束总大小、suffix 自动缩减、`max_tokens` 约束 LLM 输出、最终收敛保证摘要 ≤ 预算
 
 ---
 
@@ -439,6 +460,6 @@ flowchart TD
 
 - **嵌入检索**：session 摘要 + memory 文件做向量化，按语义相关性检索而非按时间顺序
 - **跨 session tool 调用保留**：摘要中保留关键 tool 调用的结构化摘要（如"调了 Read file.py 拿到 200 行"）
-- **max_tokens 可配**：`ContextConfig.max_output_tokens` 替代硬编码 4096
 - **并行递归摘要**：分段并行调 summary_provider，降低 L2 延迟
 - **摘要缓存**：相同前缀的摘要结果缓存（hash 前缀 → 摘要），避免重复生成
+- **max_output 联动**：`ModelMeta.max_output` 替代当前 `chat()` 默认 4096，主模型调用也按 model 适配输出上限

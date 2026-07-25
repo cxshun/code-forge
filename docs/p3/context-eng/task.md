@@ -19,8 +19,9 @@
 | CE-T8 | 测试 + 联调 | M3 测试 | P0 | 0.8d | CE-T1~T7 | ✅ 完成 |
 | CE-T9 | ContextConfig 管理后台 UI | M4 前端 | P0 | 0.8d | CE-T2 | ✅ 完成 |
 | CE-T10 | 模型切换 per-WS + UI + `make_provider` 改造 | M4 前端 + M1 provider | P0 | 1.5d | CE-T3 | ✅ 完成 |
+| CE-T11 | L2 预算感知 compaction（max_tokens + suffix 缩减 + 最终收敛） | M2 agent + M1 provider | P0 | 0.5d | CE-T7 | ✅ 完成 |
 
-**总计**：6.5d ｜ 关键路径：CE-T1 → CE-T5 → CE-T6（滑动窗口链） + CE-T3 → CE-T7（递归摘要链） + CE-T3 → CE-T10（模型切换链）
+**总计**：7.0d ｜ 关键路径：CE-T1 → CE-T5 → CE-T6（滑动窗口链） + CE-T3 → CE-T7 → CE-T11（递归摘要 → 预算感知链） + CE-T3 → CE-T10（模型切换链）
 
 ---
 
@@ -49,7 +50,7 @@
   - [x] `ContextConfig` 新增 2 字段，默认值符合 design
   - [x] `from_ws` 解析含新字段；旧 WS（无此字段）走默认值
   - [x] 未知 key 仍 ignore（`extra="ignore"`）
-- **备注**：无需 DB migration（`context_config` 是 JSONB，schema-free）。
+- **备注**：无需 DB migration（`context_config` 是 JSONB，schema-free）。`summary_target_pct` 由 CE-T11 追加。
 
 ### CE-T3 ModelRegistry + provider 接入
 
@@ -63,7 +64,7 @@
   - [x] 未知 model → 走 provider 的 `_FALLBACK_CTX`
   - [x] `MODEL_OVERRIDES` JSON 解析成功时合并到 registry；解析失败 log warning 并忽略
   - [x] `make_provider()` 传入当前 `settings.anthropic_model` / `settings.openai_model`
-- **备注**：`max_output` 字段先落地到 `ModelMeta` 但本期不使用（P3 二期再接 max_tokens）。
+- **备注**：`max_output` 字段先落地到 `ModelMeta` 但本期不使用（P3 二期再接 max_tokens）。`Provider.chat()`/`stream()` 的 `max_tokens` 参数由 CE-T11 追加。
 
 ### CE-T4 tiktoken 集成
 
@@ -121,7 +122,7 @@
   - [x] 单段失败 → 该段降级截断（首 500 + 尾 500 + `[中段省略]`），不整体 skip
   - [x] `compact_recursive=False` → 走 MVP 单次摘要路径
   - [x] observability span 记录：递归层数 / 段数 / 各段 token
-- **备注**：分段逻辑按回合（user/assistant 一对）累加，避免切断对话完整性。
+- **备注**：分段逻辑按回合（user/assistant 一对）累加，避免切断对话完整性。后续 CE-T11 增强为预算感知 compaction（目标预算 + suffix 缩减 + max_tokens + 最终收敛）。
 
 ### CE-T8 测试 + 联调
 
@@ -178,6 +179,25 @@
   - [x] 浏览器手动验证：切到 GLM + 填 key → 新 Run 用 GLM；切回 anthropic → 用全局 key
 - **备注**：api_key 加密复用 `app.core.security.encrypt_secret`；`api_key_enc` 解密在 provider 构造时做（`ModelConfig` 只持有加密串，provider 持有明文）。
 
+### CE-T11 L2 预算感知 compaction
+
+- **状态**：✅ 完成 ｜ **负责**：Qoder ｜ **完成日**：2026-07-24
+- **模块**：M2 agent + M1 provider ｜ **优先级**：P0 ｜ **预估**：0.5d ｜ **依赖**：CE-T7
+- **范围**：`Provider.chat()`/`stream()` 加 `max_tokens` 参数（base / anthropic / openai_compatible / mock）；`ContextConfig` 新增 `summary_target_pct`；`context.py` `_compact` 改为预算感知（suffix 自动缩减 + summary_budget + max_tokens 传递）；`_recursive_compact` 加最终收敛；`_find_compact_split` 提取为纯函数；前端类型同步。
+- **对应文档**：design §D-CE.2（更新）/ §3 / §4.3
+- **验收标准**：
+  - [x] `Provider.chat()` / `stream()` 接受 `max_tokens: int | None = None`；默认 None 回退 4096
+  - [x] `ContextConfig` 新增 `summary_target_pct: float = 0.4`
+  - [x] `_compact` 计算 `target = window * summary_target_pct`，suffix 超 `target * 60%` 时递减 `compact_recent`
+  - [x] `summary_budget = max(800, target - suffix_tokens)` 传给 `_single_summary` / `_recursive_compact`
+  - [x] `_single_summary` 传 `max_tokens` 到 `chat()` + prompt 追加长度约束
+  - [x] `_recursive_compact` 合并后超 `max_tokens` 时递归或最终收敛（single_summary）
+  - [x] `_find_compact_split` 提取为 staticmethod
+  - [x] `test_context.py`：`max_tokens` 传递验证 + 大 suffix 自动缩减验证
+  - [x] 全部 251 个测试通过
+  - [x] 前端 `workspace.ts` 类型同步 `summary_target_pct`
+- **备注**：解决 `context still 74696 > 60800 after clearing/compaction` 报错；根因是 L2 摘要无输出预算约束，段摘要拼接后可能远超主模型窗口。
+
 ---
 
 ## 附：跨阶段关注点
@@ -186,5 +206,5 @@
 - **观测**：所有 L1/L2/session 摘要操作均产 span；建议 admin 界面后续加「上下文健康度」面板（展示触发频率 / 压缩比 / 递归层数分布）
 - **成本**：每个 Run 多一次摘要 LLM 调用；建议 summary_provider 用便宜 model（GLM-4-air / claude-haiku），单次成本 < ¥0.01
 - **安全**：`model_config.api_key` 加密存储；GET API 不回显明文；前端 password input 不显示已填值
-- **回滚**：`ContextConfig.compact_recursive=False` 可回退 MVP L2 行为；`summary_budget_pct=0` 可关闭跨 session 摘要加载；`model_config=None` 可回退全局 settings provider
-- **后续演进（P4）**：嵌入检索 / 跨 session tool 摘要 / max_tokens 可配 / 并行递归摘要 / 摘要缓存 / model 测试连通性按钮 / ContextConfig 预设模板（见 design §8）
+- **回滚**：`ContextConfig.compact_recursive=False` 可回退 MVP L2 行为；`summary_budget_pct=0` 可关闭跨 session 摘要加载；`model_config=None` 可回退全局 settings provider；`summary_target_pct` 调高可放宽 compaction 预算约束
+- **后续演进（P4）**：嵌入检索 / 跨 session tool 摘要 / 并行递归摘要 / 摘要缓存 / max_output 联动（按 model 适配主模型输出上限）/ model 测试连通性按钮 / ContextConfig 预设模板（见 design §8）

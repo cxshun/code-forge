@@ -103,6 +103,7 @@ class AnthropicProvider(Provider):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> tuple[list[Message], Usage]:
         if not self._available:
             raise RuntimeError(_BLOCKED_ERR)
@@ -110,7 +111,7 @@ class AnthropicProvider(Provider):
         api_tools = _to_tool_defs(tools)
         resp = await self._client.messages.create(
             model=self._model,
-            max_tokens=4096,
+            max_tokens=4096 if max_tokens is None else max_tokens,
             system=system or "",
             messages=api_messages,
             tools=api_tools or anthropic.NotGiven(),
@@ -136,6 +137,7 @@ class AnthropicProvider(Provider):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         if not self._available:
             raise RuntimeError(_BLOCKED_ERR)
@@ -143,7 +145,7 @@ class AnthropicProvider(Provider):
         api_tools = _to_tool_defs(tools)
         async with self._client.messages.stream(
             model=self._model,
-            max_tokens=4096,
+            max_tokens=4096 if max_tokens is None else max_tokens,
             system=system or "",
             messages=api_messages,
             tools=api_tools or anthropic.NotGiven(),

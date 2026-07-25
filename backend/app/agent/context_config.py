@@ -38,6 +38,8 @@ class ContextConfig(BaseModel):
     summary_budget_pct: float = 0.25
     # P3 D-CE.2: L2 递归分段摘要开关（False 回退 MVP 单次摘要行为）
     compact_recursive: bool = True
+    # L2 compaction 后摘要目标 token 占 context_window 百分比（含 suffix）
+    summary_target_pct: float = 0.4
 
     @classmethod
     def from_ws(cls, data: dict | None) -> "ContextConfig":

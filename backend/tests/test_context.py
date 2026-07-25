@@ -22,6 +22,7 @@ class _FakeProvider(Provider):
         self._tokens = tokens or {}  # id(messages) -> tokens
         self._summary_text = summary_text
         self.chat_calls = 0
+        self.last_max_tokens = None
 
     @property
     def context_window(self) -> int:
@@ -38,11 +39,12 @@ class _FakeProvider(Provider):
     async def count_tokens(self, messages, system=None):
         return Usage(input_tokens=self._tokens.get(id(messages), 0))
 
-    async def chat(self, messages, tools=None, system=None):
+    async def chat(self, messages, tools=None, system=None, max_tokens=None):
         self.chat_calls += 1
+        self.last_max_tokens = max_tokens
         return [Message(role="assistant", content=self._summary_text or "summary")], Usage()
 
-    async def stream(self, messages, tools=None, system=None):
+    async def stream(self, messages, tools=None, system=None, max_tokens=None):
         raise NotImplementedError
         yield  # type: ignore[unreachable]
 
@@ -171,3 +173,54 @@ async def test_context_span_noop_without_trace():
     cm = ContextManager(provider, ContextConfig(clear_keep=2))
     res = await cm.manage(msgs)
     assert res["layer"] == "L1"
+
+
+async def test_max_tokens_passed_to_summary():
+    """L2 compaction 传递 max_tokens 到 summary provider。"""
+    msgs = _msgs(6)
+
+    async def fake_count(messages, system=None):
+        return Usage(input_tokens=8000)
+
+    provider = _FakeProvider(summary_text="S")
+    provider.count_tokens = fake_count  # type: ignore[method-assign]
+    cm = ContextManager(
+        provider, ContextConfig(trigger1=0.5, trigger2=0.75, compact_recent=2, clear_keep=2)
+    )
+    await cm.manage(msgs)
+    assert provider.last_max_tokens is not None
+    assert provider.last_max_tokens > 0
+
+
+async def test_compact_recent_reduced_for_large_suffix():
+    """suffix token 过大时自动递减 compact_recent。"""
+    msgs = [Message(role="user", content="q")]
+    for i in range(4):
+        msgs.append(
+            Message(
+                role="assistant",
+                content=f"step{i}",
+                tool_calls=[{"id": f"t{i}", "name": "Read", "input": "{}"}],
+            )
+        )
+        msgs.append(Message(role="tool_result", tool_call_id=f"t{i}", content="x" * 100))
+    # 后 2 个 tool_result 内容很大
+    for i in range(4, 6):
+        msgs.append(
+            Message(
+                role="assistant",
+                content=f"step{i}",
+                tool_calls=[{"id": f"t{i}", "name": "Read", "input": "{}"}],
+            )
+        )
+        msgs.append(Message(role="tool_result", tool_call_id=f"t{i}", content="x" * 20000))
+
+    async def fake_count(messages, system=None):
+        return Usage(input_tokens=8000)
+
+    provider = _FakeProvider(summary_text="S")
+    provider.count_tokens = fake_count  # type: ignore[method-assign]
+    cm = ContextManager(provider, ContextConfig(compact_recent=2, clear_keep=2))
+    res = await cm.manage(msgs)
+    assert res["compacted"] is True
+    assert res["kept_rounds"] < 2

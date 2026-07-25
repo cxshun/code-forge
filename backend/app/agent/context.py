@@ -74,7 +74,8 @@ class ContextManager:
         compacted = False
         # L2 compaction（L1 后仍超 trigger2）
         if after_l1 > trigger2:
-            info = await self._compact(messages)
+            target = int(window * self._cfg.summary_target_pct)
+            info = await self._compact(messages, target)
             compacted = info.get("compacted", False)
             after_l2 = (await self._provider.count_tokens(messages)).input_tokens
             if compacted:
@@ -108,38 +109,50 @@ class ContextManager:
             "after": after_l2,
             "cleared": cleared,
             "compacted": compacted,
+            "kept_rounds": info.get("kept_rounds") if compacted else None,
         }
 
-    async def _compact(self, messages: list[Message]) -> dict:
+    async def _compact(self, messages: list[Message], target: int) -> dict:
         """L2：较早历史压成摘要，保留最近 compact_recent 轮原文 + tool_use/tool_result 配对。
 
-        分段：保留最后 ``compact_recent`` 个 tool_result 及其配对 tool_use 起的全部后缀；
-        前缀（结束于完整回合，不会留下孤立 tool_use）整体替换为一条摘要 user 消息。
+        预算感知：``target`` 为 compaction 后目标总 token（含 suffix）。suffix 最多占
+        ``target * 60%``，超出则递减 ``compact_recent`` 减少 retained 轮数；剩余预算
+        全给摘要。``max_tokens`` 传入 LLM 调用约束输出长度。
 
-        P3 D-CE.2: 若 ``cfg.compact_recursive`` 且前缀 token > 摘要窗口 60%，
+        P3 D-CE.2: 若 ``cfg.compact_recursive`` 且前缀 token > 段预算，
         分段递归摘要（上限 3 层）；否则回退 MVP 单次摘要。
         """
         cfg = self._cfg
-        tr_indices = [i for i, m in enumerate(messages) if m.role == "tool_result"]
-        if len(tr_indices) <= cfg.compact_recent:
-            return {"compacted": False}
-        # 保留最后 compact_recent 个 tool_result；定位最早保留 result 对应的 tool_use
-        keep_tr = tr_indices[-cfg.compact_recent:] if cfg.compact_recent > 0 else []
-        min_tr_idx = keep_tr[0] if keep_tr else len(messages)
-        keep_from = 0
-        for i in range(min_tr_idx - 1, -1, -1):
-            if messages[i].tool_calls:
-                keep_from = i
+        suffix_budget = int(target * 0.6)
+
+        # 从 cfg.compact_recent 递减，直到 suffix token ≤ budget 或降为 0
+        split_idx: int | None = None
+        suffix_tokens = 0
+        actual_recent = 0
+        for recent in range(cfg.compact_recent, -1, -1):
+            idx = self._find_compact_split(messages, recent)
+            if idx is None:
+                continue
+            st = sum(len(m.content or "") // 4 for m in messages[idx:])
+            split_idx = idx
+            suffix_tokens = st
+            actual_recent = recent
+            if st <= suffix_budget or recent == 0:
                 break
-        if keep_from == 0:
-            return {"compacted": False}  # 前缀为空，无可压
-        prefix = messages[:keep_from]
-        suffix = messages[keep_from:]
+
+        if split_idx is None or split_idx == 0:
+            return {"compacted": False}
+
+        prefix = messages[:split_idx]
+        suffix = messages[split_idx:]
+        summary_budget = max(800, target - suffix_tokens)
 
         if cfg.compact_recursive:
-            summary_text = await self._recursive_compact(prefix, depth=0)
+            summary_text = await self._recursive_compact(
+                prefix, depth=0, max_tokens=summary_budget
+            )
         else:
-            summary_text = await self._single_summary(prefix)
+            summary_text = await self._single_summary(prefix, max_tokens=summary_budget)
         if not summary_text:
             return {"compacted": False}
 
@@ -150,15 +163,38 @@ class ContextManager:
         messages.extend(suffix)
         return {
             "compacted": True,
-            "kept_rounds": cfg.compact_recent,
+            "kept_rounds": actual_recent,
             "summary_len": len(summary_text),
         }
 
-    async def _single_summary(self, messages: list[Message]) -> str | None:
-        """MVP 单次摘要（原行为，D-CE.2 关闭时走此路径）。"""
+    @staticmethod
+    def _find_compact_split(
+        messages: list[Message], compact_recent: int
+    ) -> int | None:
+        """找到 suffix 起始 index：suffix 包含最后 compact_recent 个 tool_result
+        及其配对 tool_use 起的全部消息。无法分割返回 None。
+        """
+        tr_indices = [i for i, m in enumerate(messages) if m.role == "tool_result"]
+        if len(tr_indices) <= compact_recent:
+            return None
+        keep_tr = tr_indices[-compact_recent:] if compact_recent > 0 else []
+        min_tr_idx = keep_tr[0] if keep_tr else len(messages)
+        for i in range(min_tr_idx - 1, -1, -1):
+            if messages[i].tool_calls:
+                return i if i > 0 else None
+        return None
+
+    async def _single_summary(
+        self, messages: list[Message], max_tokens: int = 4096
+    ) -> str | None:
+        """单次摘要，``max_tokens`` 约束 LLM 输出 + prompt 提示长度。"""
+        instructions = (
+            f"{self._cfg.compact_instructions}\n\n"
+            f"请将摘要控制在约 {max_tokens} tokens（约 {max_tokens * 4} 字符）以内。"
+        )
         try:
             summary_msgs, _ = await self._summary_provider.chat(
-                messages=messages, system=self._cfg.compact_instructions
+                messages=messages, system=instructions, max_tokens=max_tokens
             )
         except Exception:
             log.warning("L2 compaction summary call failed; skip", exc_info=True)
@@ -166,36 +202,38 @@ class ContextManager:
         return (summary_msgs[0].content or "").strip() if summary_msgs else ""
 
     async def _recursive_compact(
-        self, messages: list[Message], depth: int = 0
+        self, messages: list[Message], depth: int = 0, max_tokens: int = 4096
     ) -> str | None:
-        """D-CE.2 递归分段摘要。
+        """D-CE.2 递归分段摘要（预算感知）。
 
-        - 前缀 ≤ 摘要窗口 60% → 单次摘要（base case）
-        - 前缀 > 60% → 按回合分段（每段 ≤ 60% 窗口），逐段摘要后合并
-        - 合并后 > 80% 窗口 → 再递归一层（depth+1）
-        - 递归上限 3 层；超过取当前结果 + 截断提示
+        - 前缀 ≤ 段预算 → 单次摘要（base case）
+        - 前缀 > 段预算 → 按回合分段，逐段摘要后合并
+        - 合并后 > max_tokens → 再递归一层（depth+1）
+        - 递归上限 3 层后仍超 → 最终收敛：对 merged 做一次单次摘要
         """
         cfg = self._cfg
         summary_window = self._summary_provider.context_window
-        seg_budget = int(summary_window * 0.6)
+        seg_budget = min(int(summary_window * 0.6), max_tokens * 3)
 
-        # 粗估前缀 token（同步 len//4，避免 async 调用开销）
         prefix_tokens = sum(len(m.content or "") // 4 for m in messages)
 
         # Base case: 前缀够小，或已达递归上限
         if prefix_tokens <= seg_budget or depth >= 3:
-            text = await self._single_summary(messages)
+            text = await self._single_summary(messages, max_tokens=max_tokens)
             if text and depth >= 3:
                 text = text + "\n\n[递归上限已达，早期历史可能被截断]"
             return text
 
         # 分段摘要
         segments = self._split_by_turns(messages, seg_budget)
+        seg_max = min(4096, max_tokens)
         seg_summaries: list[str] = []
         for i, seg in enumerate(segments):
             try:
                 sm, _ = await self._summary_provider.chat(
-                    messages=seg, system=cfg.compact_instructions
+                    messages=seg,
+                    system=cfg.compact_instructions,
+                    max_tokens=seg_max,
                 )
                 text = (sm[0].content or "").strip() if sm else ""
                 seg_summaries.append(text if text else self._truncate_segment(seg))
@@ -207,13 +245,19 @@ class ContextManager:
         if not merged.strip():
             return None
 
-        # 合并后仍超 80% 窗口 → 再递归
+        # 合并后仍超 max_tokens → 再递归 / 最终收敛
         merged_tokens = len(merged) // 4
-        if merged_tokens > summary_window * 0.8 and depth < 2:
-            recursive_result = await self._recursive_compact(
-                [Message(role="user", content=merged)], depth + 1
+        if merged_tokens > max_tokens:
+            if depth < 2:
+                recursive_result = await self._recursive_compact(
+                    [Message(role="user", content=merged)], depth + 1, max_tokens=max_tokens
+                )
+                return recursive_result or merged
+            # 最终收敛：对 merged 做一次单次摘要压到目标
+            converged = await self._single_summary(
+                [Message(role="user", content=merged)], max_tokens=max_tokens
             )
-            return recursive_result or merged
+            return converged or merged
 
         return merged
 

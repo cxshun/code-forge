@@ -55,6 +55,7 @@ class MockProvider(Provider):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> tuple[list[Message], Usage]:
         self._call_count += 1
         text = self._mock_text or self._echo(messages)
@@ -76,6 +77,7 @@ class MockProvider(Provider):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         text = self._mock_text or self._echo(messages)
         if self._mock_tool_name and self._call_count == 0:

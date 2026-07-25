@@ -173,13 +173,14 @@ class OpenAICompatibleProvider(Provider):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> tuple[list[Message], Usage]:
         if not self._available:
             raise RuntimeError(_BLOCKED_ERR)
         payload: dict = {
             "model": self._model,
             "messages": _to_openai_messages(messages, system),
-            "max_tokens": 4096,
+            "max_tokens": 4096 if max_tokens is None else max_tokens,
         }
         openai_tools = _to_openai_tools(tools)
         if openai_tools:
@@ -228,6 +229,7 @@ class OpenAICompatibleProvider(Provider):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         # OpenAI Chat Completions SSE 流式：text delta 实时 yield；tool_calls 分片累积，
         # 流末统一 emit（OpenAI 把一个 tool_call 的 arguments 拆多片传，需等完整再 yield）。
@@ -237,7 +239,7 @@ class OpenAICompatibleProvider(Provider):
         payload: dict = {
             "model": self._model,
             "messages": _to_openai_messages(messages, system),
-            "max_tokens": 4096,
+            "max_tokens": 4096 if max_tokens is None else max_tokens,
             "stream": True,
         }
         openai_tools = _to_openai_tools(tools)

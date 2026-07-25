@@ -15,6 +15,7 @@ export interface ContextConfig {
   exclude_tools: string[]
   summary_budget_pct: number  // P3 D-CE.1 跨 session 摘要预算
   compact_recursive: boolean   // P3 D-CE.2 L2 递归分段摘要开关
+  summary_target_pct: number   // L2 compaction 后目标 token 占 context_window 百分比
 }
 
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
@@ -34,6 +35,7 @@ export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
   exclude_tools: [],
   summary_budget_pct: 0.25,
   compact_recursive: true,
+  summary_target_pct: 0.4,
 }
 
 export interface ModelConfig {

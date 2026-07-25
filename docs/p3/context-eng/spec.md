@@ -12,7 +12,7 @@
 MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在**单 session 内**的上下文压缩工作正常。但随着实际使用深入，暴露出三个关键缺口：
 
 1. **跨 session 上下文断裂**：`load_chat_history` 只加载最近 1 个 completed session 的 JSONL，再往前全丢。用户隔天回来、或连续多轮对话后，早期上下文完全消失。
-2. **L2 单次摘要在长对话中静默失败**：前缀超过摘要模型窗口时，`_compact` 捕获异常后直接 skip，导致 L4 频繁触发、Run 报错。
+2. **L2 摘要无预算约束，长对话中频繁 L4 报错**：compaction 后摘要大小完全取决于 LLM 输出，段摘要简单拼接无收敛，递归判断用摘要模型窗口而非主模型窗口。前缀超过摘要模型窗口时，`_compact` 捕获异常后直接 skip，导致 L4 频繁触发、Run 报错。
 3. **OpenAI 兼容 provider token 计数不准**：`len(content)//4` 估算误差可达 ±30%，L1/L2 触发时机偏离设计阈值。
 4. **`context_window` 硬编码**：Anthropic 固定 200K、OpenAI 固定 128K，切换到不同 model（如 claude-opus-4 200K vs glm-4-air 128K vs deepseek-v3 64K）时阈值不自动调整。
 
@@ -21,7 +21,7 @@ MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在
 在不改动 L0-L4 整体框架的前提下，针对上述四个缺口做增强：
 
 - **跨 session 滑动窗口**：新 Run 启动时加载「最近 N 个 session 的摘要 + 最近 1 个 session 的原文」，N 按 token 预算动态决定
-- **L2 递归摘要**：前缀太大时分段摘要再合并，最多递归 3 层，消除静默失败
+- **L2 递归摘要（预算感知）**：前缀太大时分段摘要再合并，最多递归 3 层；compaction 有基于主模型窗口的目标预算，suffix 和摘要分别受预算约束，消除静默失败和 L4 频繁报错
 - **精确 token 计数**：OpenAI 兼容 provider 接入 `tiktoken`，Anthropic 保留 `count_tokens` API
 - **per-model context_window**：引入 `ModelRegistry`，按 model_name 查询真实窗口大小
 
@@ -30,7 +30,6 @@ MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在
 - **不做嵌入检索 / 向量记忆**：长期记忆仍走 file-based `memory/MEMORY.md`，P4 再考虑嵌入
 - **不重写 L0-L4 框架**：保留现有 `ContextManager.manage()` 入口与 L1-L4 编排逻辑
 - **不改 1 Session : 1 Run 模型**：D23 的 session/run 结构不变，只改 session 间上下文加载方式
-- **不做 max_tokens 可配**：输出长度仍固定 4096，P3 二期再考虑
 - **不做跨 session tool 调用保留**：跨 session 仍只传文本摘要，不保留 tool_use/tool_result 原文（配对复杂度高，P4 评估）
 
 ---
@@ -48,13 +47,13 @@ MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在
 - **F3.3** 摘要生成失败（LLM 调用异常 / 超时）时降级为「不生成摘要」，不影响 Run 正常完成
 - **F3.4** 摘要内容遵循 L2 同款指令（保留代码片段 / 文件路径 / 决策 / TODO / 用户偏好），可被 `ContextConfig.compact_instructions` 覆盖
 
-### 3.2 L2 递归摘要
+### 3.2 L2 递归摘要（预算感知）
 
-- **F3.5** L2 compaction 触发时，若前缀 token 超过摘要模型窗口的 60%，分段摘要：
-  - 分段边界对齐到完整回合（不切断 tool_use/tool_result 配对）
-  - 每段独立调 summary_provider 生成段摘要
-  - 段摘要合并为总摘要；若合并后仍超窗口，再递归一层
-  - 最多递归 3 层，超过则取前 3 层结果 + 截断提示
+- **F3.5** L2 compaction 触发时，计算目标 token 预算 `target = context_window * summary_target_pct`（默认 40%）：
+  - suffix 最多占 `target * 60%`，超出则递减 `compact_recent` 减少 retained 轮数
+  - `summary_budget = max(800, target - suffix_tokens)` 传给摘要 LLM 调用（`max_tokens`）约束输出
+  - 若前缀 token 超过段预算，分段摘要：分段边界对齐到完整回合（不切断 tool_use/tool_result 配对）
+  - 段摘要合并后若超过 `summary_budget`，递归一层；递归上限 3 层后做最终收敛（对 merged 做一次单次摘要压到目标）
 - **F3.6** 递归摘要过程中任一段失败时，该段降级为截断（保留首尾 + 中间省略），不整体 skip
 
 ### 3.3 精确 token 计数
@@ -71,9 +70,9 @@ MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在
 ### 3.5 ContextConfig 管理后台 UI
 
 - **F3.12** WorkspaceDetailView 新增「上下文管理」tab，表单化编辑 `ContextConfig`（替代当前 raw JSON textarea）
-- **F3.13** 表单字段对应 `ContextConfig` 全部 11 个字段（含 P3 新增 `summary_budget_pct` / `compact_recursive`），控件类型：
+- **F3.13** 表单字段对应 `ContextConfig` 全部 12 个字段（含 P3 新增 `summary_budget_pct` / `compact_recursive` / `summary_target_pct`），控件类型：
   - `enabled` / `compact_recursive`：switch
-  - `trigger1` / `trigger2` / `summary_budget_pct`：slider，显示 `% of context_window`
+  - `trigger1` / `trigger2` / `summary_budget_pct` / `summary_target_pct`：slider，显示 `% of context_window`
   - `clear_keep` / `compact_recent`：number input（1-20）
   - `summary_provider`：select（anthropic / openai_compatible）
   - `summary_model`：text input，placeholder 显示 provider 默认 model
@@ -97,7 +96,7 @@ MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在
 - **NF3.1** 摘要生成是异步任务，不阻塞 Run 完成；失败仅 log warning，不影响主流程
 - **NF3.2** `tiktoken` 作为 optional dependency，缺失时 graceful fallback，不强制安装
 - **NF3.3** `ModelRegistry` 查询是纯内存操作（dict），不引入 DB / 网络调用
-- **NF3.4** 递归摘要有明确的层数上限（3 层）和单段 token 上限，防止无限循环 / 成本失控
+- **NF3.4** 递归摘要有明确的层数上限（3 层）和单段 token 上限；L2 compaction 有基于主模型窗口的目标预算（`summary_target_pct`），suffix 和摘要分别受预算约束，防止压缩后仍超 L4 硬限
 - **NF3.5** 所有上下文管理操作（L1/L2/递归摘要/session 摘要生成）均产 observability span，记录前后 token / 压缩比 / 层数 / 段数
 - **NF3.6** ContextConfig 表单保存前做字段校验（trigger1 < trigger2 < 0.95、clear_keep ≥ 1 等）；校验失败前端标红提示，不发请求
 - **NF3.7** `model_config.api_key` 加密存储（复用 `encrypt_secret`）；API 返回时不回显明文，只返回 `has_api_key: bool`
@@ -120,7 +119,7 @@ MVP 阶段已落地 L0-L4 四道防线（`backend/app/agent/context.py`），在
 
 | 来源 | 关系 | 说明 |
 |---|---|---|
-| MVP D34「上下文管理 L0-L4」 | **增强** | L2 改为递归摘要；跨 session 加载改为滑动窗口；L1/L3/L4 逻辑不变 |
+| MVP D34「上下文管理 L0-L4」 | **增强** | L2 改为预算感知递归摘要（目标预算 + suffix 缩减 + max_tokens + 最终收敛）；跨 session 加载改为滑动窗口；L1/L3/L4 逻辑不变 |
 | MVP D23「1 Session : 1 Run」 | **不变** | session/run 结构不变，新增 `session_summaries` 表为 1:1 附属 |
 | MVP `load_chat_history` | **重写** | 从「最近 1 session 原文」改为「最近 N session 摘要 + 最近 1 session 原文」 |
 | MVP `chat_history_max_messages` | **保留** | 仍控制原文消息条数上限；摘要预算由新配置 `summary_budget_pct` 控制 |

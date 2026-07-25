@@ -99,6 +99,7 @@ class Provider(ABC):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> tuple[list[Message], Usage]:
         """非流式 LLM 调用。
 
@@ -114,6 +115,7 @@ class Provider(ABC):
         messages: list[Message],
         tools: list[ToolDef] | None = None,
         system: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """流式 LLM 调用，生成 StreamEvent（text / tool_use / stop）。
 
