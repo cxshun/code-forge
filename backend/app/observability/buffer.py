@@ -125,10 +125,39 @@ class SpanBuffer:
             if fut is not None and not fut.done():
                 fut.set_result(None)
 
+    @staticmethod
+    def _sort_batch(batch: list[dict]) -> list[dict]:
+        """拓扑排序：parent span 排在 child 之前（同 batch 内）。
+
+        即使 FK 约束已移除，先写 parent 仍有利于查询一致性。
+        """
+        ids = {s["span_id"] for s in batch}
+        roots = [s for s in batch if not s.get("parent_span_id") or s["parent_span_id"] not in ids]
+        children = [s for s in batch if s not in roots]
+        result = list(roots)
+        placed = {s["span_id"] for s in result}
+        remaining = children
+        while remaining:
+            progressed = False
+            next_remaining = []
+            for s in remaining:
+                if s["parent_span_id"] in placed:
+                    result.append(s)
+                    placed.add(s["span_id"])
+                    progressed = True
+                else:
+                    next_remaining.append(s)
+            remaining = next_remaining
+            if not progressed:
+                result.extend(remaining)
+                break
+        return result
+
     async def _upsert(self, batch: list[dict]) -> None:
         """UPSERT 到 PG spans 表。"""
+        sorted_batch = self._sort_batch(batch)
         async with async_session_factory() as db:
-            stmt = pg_insert(Span).values(batch)
+            stmt = pg_insert(Span).values(sorted_batch)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["span_id"],
                 set_={

@@ -159,7 +159,15 @@ class AnthropicProvider(Provider):
         self, messages: list[Message], system: str | None = None
     ) -> Usage:
         if not self._available:
-            total = sum(len(m.content or "") // 4 for m in messages) + len(system or "") // 4
+            import json as _json
+            total = 0
+            for m in messages:
+                total += len(m.content or "") // 4
+                if m.reasoning:
+                    total += len(m.reasoning) // 4
+                if m.tool_calls:
+                    total += len(_json.dumps(m.tool_calls, ensure_ascii=False)) // 4
+            total += len(system or "") // 4
             return Usage(input_tokens=total, output_tokens=0)
         api_messages = _to_anthropic_messages(messages)
         try:

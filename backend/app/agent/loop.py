@@ -27,6 +27,7 @@ from app.tools.registry import ToolRegistry
 log = logging.getLogger("agent.loop")
 
 MAX_TOOL_ROUNDS = 50
+TOOL_OUTPUT_MAX_CHARS = 30_000  # L0: ~7500 tokens, prevents single tool from blowing context
 
 
 @dataclass
@@ -143,6 +144,12 @@ async def _execute_tools(
         async with span(span_type, tool_name=tool_name) as sctx:
             sctx.tool_input_summary = str(tc.get("input", ""))[:2000]
             content = await registry.execute(tc["name"], tc.get("input", "{}"), ctx.tool_ctx)
+            # L0: 万能截断 — MCP/Skill/Subagent 无自带 cap，此处兜底
+            if content and len(content) > TOOL_OUTPUT_MAX_CHARS:
+                content = (
+                    content[:TOOL_OUTPUT_MAX_CHARS]
+                    + f"\n\n[... output truncated ({len(content)} chars total)]"
+                )
             sctx.tool_output_summary = content[:2000] if content else None
             if content and content.startswith("Error: path rejected"):
                 sctx.tool_path_rejected = True
@@ -194,7 +201,7 @@ async def run_loop(
 
         # 上下文管理（D34）：每轮前跑四道防线（L1 clearing / L4 兜底）
         if context_manager is not None:
-            await context_manager.manage(ctx.messages)
+            await context_manager.manage(ctx.messages, system=ctx.system)
 
         assistant, tool_calls, _usage = await _stream_round(
             provider, ctx, tools_defs, on_text, on_usage

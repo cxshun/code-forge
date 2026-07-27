@@ -44,8 +44,9 @@ class Span(Base, TimestampMixin):
     span_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     trace_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     # 自引用：父 span；根 span 为 NULL
+    # 不设 FK 约束 — async CM 导致子 span 先于父 span 入库，FK 会持续冲突
     parent_span_id: Mapped[str | None] = mapped_column(
-        ForeignKey("spans.span_id", ondelete="CASCADE"), nullable=True, index=True
+        String(32), nullable=True, index=True
     )
     span_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

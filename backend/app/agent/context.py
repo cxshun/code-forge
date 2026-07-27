@@ -47,7 +47,9 @@ class ContextManager:
         self._cfg = cfg or ContextConfig()
         self._summary_provider = summary_provider or provider
 
-    async def manage(self, messages: list[Message]) -> dict:
+    async def manage(
+        self, messages: list[Message], system: str | None = None
+    ) -> dict:
         """运行四道防线（in-place 改 messages）。返回 ``{layer, before, after, ...}``。
 
         - 未超 trigger1：``{layer: None}``
@@ -60,24 +62,25 @@ class ContextManager:
         trigger2 = int(window * self._cfg.trigger2)
         hard = int(window * _HARD_PCT)
 
-        before = (await self._provider.count_tokens(messages)).input_tokens
+        before = (await self._provider.count_tokens(messages, system=system)).input_tokens
         if before < trigger1:
             return {"layer": None, "before": before, "after": before}
 
         # L1 clearing
         cleared = self._clear_old_tool_results(messages)
-        after_l1 = (await self._provider.count_tokens(messages)).input_tokens
+        after_l1 = (await self._provider.count_tokens(messages, system=system)).input_tokens
         log.info("context L1 clearing: %d -> %d tokens (cleared %d)", before, after_l1, cleared)
         await self._emit_span("L1", "clearing", before, after_l1, cleared_count=cleared)
 
         after_l2 = after_l1
         compacted = False
+        info: dict = {}
         # L2 compaction（L1 后仍超 trigger2）
         if after_l1 > trigger2:
             target = int(window * self._cfg.summary_target_pct)
             info = await self._compact(messages, target)
             compacted = info.get("compacted", False)
-            after_l2 = (await self._provider.count_tokens(messages)).input_tokens
+            after_l2 = (await self._provider.count_tokens(messages, system=system)).input_tokens
             if compacted:
                 log.info("context L2 compaction: %d -> %d tokens", after_l1, after_l2)
                 await self._emit_span(
@@ -89,18 +92,37 @@ class ContextManager:
                     summary_len=info.get("summary_len", 0),
                     summary_provider=self._summary_provider.name,
                 )
-                # L3 强信号注入（D34：提示主 Agent 收口写 chat memory）
-                messages.append(Message(role="user", content=_COMPACTION_SIGNAL))
+                # L3 memory 联动提示已合并到摘要消息内部（不作为独立 user 消息，
+                # 避免 agent 把提示当成新任务执行，污染用户可见回复）
 
-        # L4 硬兜底
+        # L4 硬兜底 — 先尝试紧急截断，仍超限才 abort
         if after_l2 > hard:
+            log.warning(
+                "context L4: %d > %d after L1+L2, trying emergency truncation",
+                after_l2, hard,
+            )
+            self._emergency_truncate(messages)
+            after_l4 = (await self._provider.count_tokens(messages, system=system)).input_tokens
+            if after_l4 <= hard:
+                log.warning(
+                    "context L4 emergency truncation saved run: %d -> %d",
+                    after_l2, after_l4,
+                )
+                await self._emit_span("L4", "emergency", after_l2, after_l4)
+                return {
+                    "layer": "L4-emergency",
+                    "before": before,
+                    "after": after_l4,
+                    "cleared": cleared,
+                    "compacted": compacted,
+                }
             log.error(
-                "context L4 hard limit: %d > %d (95%% of %d) after L1+L2; abort",
-                after_l2, hard, window,
+                "context L4 hard limit: %d > %d (95%% of %d) after emergency truncation; abort",
+                after_l4, hard, window,
             )
             raise ContextLimitError(
-                f"context still {after_l2} > {hard} (95% of {window}) after "
-                f"clearing/compaction; abort run"
+                f"context still {after_l4} > {hard} (95% of {window}) after "
+                f"clearing/compaction/emergency; abort run"
             )
 
         return {
@@ -121,6 +143,12 @@ class ContextManager:
 
         P3 D-CE.2: 若 ``cfg.compact_recursive`` 且前缀 token > 段预算，
         分段递归摘要（上限 3 层）；否则回退 MVP 单次摘要。
+
+        降级策略：
+        1. 优先 tool_result-based split → LLM 摘要
+        2. split 失败 → fallback split（任意安全边界）
+        3. 摘要失败 → 截断降级（保留首尾，中间省略）
+        4. suffix 过大 → 截断 suffix 内旧 tool_result
         """
         cfg = self._cfg
         suffix_budget = int(target * 0.6)
@@ -140,23 +168,44 @@ class ContextManager:
             if st <= suffix_budget or recent == 0:
                 break
 
+        # Fallback: 无 tool_result 时按安全边界 split
         if split_idx is None or split_idx == 0:
-            return {"compacted": False}
+            split_idx = self._find_fallback_split(messages)
+            if split_idx is None or split_idx <= 1:
+                return {"compacted": False}
+            suffix_tokens = sum(len(m.content or "") // 4 for m in messages[split_idx:])
+            actual_recent = -1
 
         prefix = messages[:split_idx]
         suffix = messages[split_idx:]
+
+        # suffix 自身过大 → 截断旧 tool_result content
+        if suffix_tokens > suffix_budget:
+            self._truncate_suffix_tool_results(suffix, keep=2)
+            suffix_tokens = sum(len(m.content or "") // 4 for m in suffix)
+
         summary_budget = max(800, target - suffix_tokens)
 
+        summary_text = None
         if cfg.compact_recursive:
             summary_text = await self._recursive_compact(
                 prefix, depth=0, max_tokens=summary_budget
             )
         else:
             summary_text = await self._single_summary(prefix, max_tokens=summary_budget)
+
+        # 摘要失败 → 截断降级（不放弃 compaction）
+        if not summary_text:
+            log.warning("L2 summary failed, using truncation fallback")
+            summary_text = self._truncate_prefix(prefix)
+
         if not summary_text:
             return {"compacted": False}
 
-        summary_msg = Message(role="user", content=f"[历史摘要]\n{summary_text}")
+        summary_msg = Message(
+            role="user",
+            content=f"[历史摘要]\n{summary_text}\n\n{_COMPACTION_SIGNAL}",
+        )
         # in-place 替换（调用方持有的 list 对象不变）
         messages.clear()
         messages.append(summary_msg)
@@ -183,6 +232,82 @@ class ContextManager:
             if messages[i].tool_calls:
                 return i if i > 0 else None
         return None
+
+    @staticmethod
+    def _find_fallback_split(messages: list[Message]) -> int | None:
+        """无 tool_result 时的 fallback split：在安全边界处切割。
+
+        安全边界 = 前一条消息是 user / tool_result / 无 tool_calls 的 assistant，
+        确保 suffix 不会有孤立的 tool_use。
+        """
+        n = len(messages)
+        if n <= 3:
+            return None
+        # 从 2/3 处往前找安全边界（保留后 1/3 作为 suffix）
+        target = max(2, n * 2 // 3)
+        for i in range(target, 0, -1):
+            prev = messages[i - 1]
+            if prev.role in ("user", "tool_result"):
+                return i
+            if prev.role == "assistant" and not prev.tool_calls:
+                return i
+        return 1
+
+    @staticmethod
+    def _truncate_prefix(prefix: list[Message]) -> str:
+        """摘要失败时的降级：保留首条 user + 末尾 2 条，中间省略。"""
+        if not prefix:
+            return ""
+        parts: list[str] = []
+        if prefix[0].role == "user":
+            c = (prefix[0].content or "")[:3000]
+            parts.append(f"[原始任务]\n{c}")
+        for m in prefix[-2:]:
+            c = (m.content or "")[:2000]
+            parts.append(f"[{m.role}]\n{c}")
+        middle = len(prefix) - 3
+        header = f"[上下文截断 — {middle} 条消息被省略]\n\n" if middle > 0 else ""
+        return header + "\n\n---\n\n".join(parts)
+
+    @staticmethod
+    def _truncate_suffix_tool_results(suffix: list[Message], keep: int = 2) -> None:
+        """suffix 过大时截断旧 tool_result content（保留最近 keep 个完整）。"""
+        tr_indices = [i for i, m in enumerate(suffix) if m.role == "tool_result"]
+        to_truncate = tr_indices[:-keep] if keep > 0 else tr_indices
+        for i in to_truncate:
+            content = suffix[i].content or ""
+            if len(content) > 1000:
+                suffix[i].content = (
+                    content[:1000] + f"\n\n[... truncated ({len(content)} chars total)]"
+                )
+
+    @staticmethod
+    def _emergency_truncate(messages: list[Message]) -> None:
+        """L4 紧急截断：暴力裁剪以避免 abort。
+
+        - 清除所有 tool_result content（仅保留最后 2 个）
+        - 清除所有 reasoning（仅保留最后一条 assistant）
+        - 所有 content 截断到 5000 字符
+        - 所有 tool_call input 截断到 200 字符
+        """
+        tr_indices = [i for i, m in enumerate(messages) if m.role == "tool_result"]
+        for i in tr_indices[:-2]:
+            messages[i].content = _PLACEHOLDER
+
+        asst_indices = [i for i, m in enumerate(messages) if m.role == "assistant"]
+        last_asst = asst_indices[-1] if asst_indices else -1
+        for i in asst_indices:
+            if i != last_asst and messages[i].reasoning:
+                messages[i].reasoning = None
+
+        for m in messages:
+            if m.content and len(m.content) > 5000:
+                m.content = m.content[:5000] + "\n\n[... emergency truncated]"
+            if m.tool_calls:
+                for tc in m.tool_calls:
+                    inp = tc.get("input", "")
+                    if len(inp) > 200:
+                        tc["input"] = inp[:200] + "...[truncated]"
 
     async def _single_summary(
         self, messages: list[Message], max_tokens: int = 4096
@@ -307,14 +432,24 @@ class ContextManager:
     def _clear_old_tool_results(self, messages: list[Message]) -> int:
         """L1：保留最近 ``clear_keep`` 个 tool_result，其余 content 替换占位。
 
-        保留 tool_use 记录与 id 配对（只动 tool_result.content）。``exclude_tools``
-        命中的工具 result 不清。
+        保留 tool_use 记录与 id 配对（只动 tool_result.content）。
+        ``exclude_tools`` 命中的工具 result 不清。
+
+        额外清理（减少 count_tokens 误计）：
+        - 旧 assistant 消息的 ``reasoning`` 字段置 None（API 已替换为空串）
+        - 旧 assistant 消息的 ``tool_calls[].input`` 截断到 500 字符
         """
         cfg = self._cfg
         exclude = set(cfg.exclude_tools)
         tr_indices = [i for i, m in enumerate(messages) if m.role == "tool_result"]
-        if len(tr_indices) <= cfg.clear_keep:
+        asst_indices = [
+            i for i, m in enumerate(messages)
+            if m.role == "assistant" and (m.reasoning or m.tool_calls)
+        ]
+
+        if len(tr_indices) <= cfg.clear_keep and not asst_indices:
             return 0
+
         keep = cfg.clear_keep
         to_clear = tr_indices[:-keep] if keep > 0 else tr_indices
         cleared = 0
@@ -324,6 +459,24 @@ class ContextManager:
                 continue
             messages[i].content = _PLACEHOLDER
             cleared += 1
+
+        # 清旧 assistant reasoning（仅保留最后一条）
+        last_asst = asst_indices[-1] if asst_indices else -1
+        for i in asst_indices:
+            if i == last_asst:
+                continue
+            m = messages[i]
+            if m.reasoning:
+                m.reasoning = None
+                cleared += 1
+            # 截断旧 tool_call input（Write 等工具的 input 可能很大）
+            if m.tool_calls:
+                for tc in m.tool_calls:
+                    inp = tc.get("input", "")
+                    if len(inp) > 500:
+                        tc["input"] = inp[:500] + f"...[truncated, was {len(inp)} chars]"
+                        cleared += 1
+
         return cleared
 
     @staticmethod

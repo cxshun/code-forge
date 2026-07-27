@@ -73,7 +73,7 @@ def _to_openai_messages(messages: list[Message], system: str | None) -> list[dic
             # 但只需保留最近一轮的 reasoning，历史轮的替换为空串以节省 context。
             if m.role == "assistant":
                 msg["reasoning_content"] = (
-                    m.reasoning if i == last_assistant_idx else ""
+                    (m.reasoning or "") if i == last_assistant_idx else ""
                 )
             if m.tool_calls:
                 msg["tool_calls"] = [
@@ -315,11 +315,29 @@ class OpenAICompatibleProvider(Provider):
         self, messages: list[Message], system: str | None = None
     ) -> Usage:
         # design D-CE.3: 优先 tiktoken 精确计数，不可用则字符估算（len//4）
+        # 必须计入 reasoning + tool_calls，否则 thinking 模型触发严重延迟
+        import json as _json
+
+        def _msg_tokens(m: Message) -> int:
+            parts = [m.content or ""]
+            if m.reasoning:
+                parts.append(m.reasoning)
+            if m.tool_calls:
+                parts.append(_json.dumps(m.tool_calls, ensure_ascii=False))
+            return sum(len(p) for p in parts)
+
         if self._enc is None:
-            total = sum(len(m.content or "") // 4 for m in messages)
+            total = sum(_msg_tokens(m) // 4 for m in messages)
             total += len(system or "") // 4
             return Usage(input_tokens=total, output_tokens=0)
         enc = self._enc
-        total = sum(len(enc.encode(m.content or "")) for m in messages)
-        total += len(enc.encode(system or ""))
+        total = 0
+        for m in messages:
+            total += len(enc.encode(m.content or ""))
+            if m.reasoning:
+                total += len(enc.encode(m.reasoning))
+            if m.tool_calls:
+                total += len(enc.encode(_json.dumps(m.tool_calls, ensure_ascii=False)))
+        if system:
+            total += len(enc.encode(system))
         return Usage(input_tokens=total, output_tokens=0)

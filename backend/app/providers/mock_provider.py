@@ -95,8 +95,15 @@ class MockProvider(Provider):
     async def count_tokens(
         self, messages: list[Message], system: str | None = None
     ) -> Usage:
-        # 简单估算：每 4 字符 1 token
-        total = sum(len(m.content or "") // 4 for m in messages)
+        # 简单估算：每 4 字符 1 token（含 reasoning + tool_calls）
+        import json as _json
+        total = 0
+        for m in messages:
+            total += len(m.content or "") // 4
+            if m.reasoning:
+                total += len(m.reasoning) // 4
+            if m.tool_calls:
+                total += len(_json.dumps(m.tool_calls, ensure_ascii=False)) // 4
         total += len(system or "") // 4
         return Usage(input_tokens=total, output_tokens=0)
 
