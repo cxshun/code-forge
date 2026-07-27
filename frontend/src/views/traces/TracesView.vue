@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { marked } from 'marked'
 import { tracesApi } from '@/api/traces'
 import { workspacesApi } from '@/api/workspaces'
 import type { TraceListItem, SpanOut } from '@/types/trace'
 import type { WorkspaceBrief, ChatBrief } from '@/types/workspace'
+
+marked.setOptions({ gfm: true, breaks: true })
 
 const workspaces = ref<WorkspaceBrief[]>([])
 const selectedWsId = ref<number | null>(null)
@@ -25,7 +28,44 @@ const payloadLoading = ref(false)
 // 会话消息对话框
 const msgDialogVisible = ref(false)
 const msgLoading = ref(false)
-const messages = ref<Array<{ role: string; content: string | null; reasoning?: string | null }>>([])
+const messages = ref<Array<{ role: string; content: string | null; reasoning?: string | null; tool_calls?: Array<{ id: string; name: string; input: string }> | null; created_at?: string | null }>>([])
+
+function formatContent(text: string | null): string {
+  if (!text) return ''
+  const trimmed = text.trim()
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2)
+    } catch {
+      // not valid JSON
+    }
+  }
+  return text
+}
+
+function parseToolInput(input: string): string {
+  if (!input) return ''
+  try {
+    return JSON.stringify(JSON.parse(input), null, 2)
+  } catch {
+    return input
+  }
+}
+
+function isLongContent(text: string | null, threshold = 500): boolean {
+  if (!text) return false
+  return text.length > threshold
+}
+
+function isJsonContent(text: string | null): boolean {
+  if (!text) return false
+  const t = text.trim()
+  return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))
+}
+
+function renderMarkdown(text: string): string {
+  return marked.parse(text) as string
+}
 
 async function onWsChange() {
   if (!selectedWsId.value) return
@@ -72,7 +112,7 @@ async function viewConversation(runId: number) {
   messages.value = []
   try {
     const res = await workspacesApi.getRunMessages(selectedWsId.value, runId)
-    messages.value = res.messages
+    messages.value = res.messages as typeof messages.value
   } catch {
     ElMessage.error('加载会话消息失败')
   } finally {
@@ -331,8 +371,33 @@ onMounted(async () => {
               <summary style="cursor: pointer; color: var(--el-text-color-secondary);">💭 模型思考</summary>
               <pre style="margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.6; color: var(--el-text-color-regular);">{{ msg.reasoning }}</pre>
             </details>
-            <pre v-if="msg.content" style="margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 14px; line-height: 1.6;">{{ msg.content }}</pre>
-            <span v-else-if="!msg.reasoning" style="color: #999; font-style: italic">无内容</span>
+            <details v-if="msg.tool_calls && msg.tool_calls.length" style="margin-bottom: 8px; font-size: 13px;">
+              <summary style="cursor: pointer; color: var(--el-color-primary);">🔧 工具调用 ({{ msg.tool_calls.length }})</summary>
+              <div v-for="tc in msg.tool_calls" :key="tc.id" style="margin: 8px 0; padding: 8px; background: var(--el-fill-color-light); border-radius: 4px;">
+                <div style="margin-bottom: 4px;">
+                  <el-tag size="small" type="info">{{ tc.name }}</el-tag>
+                  <span style="font-size: 12px; color: var(--el-text-color-secondary); margin-left: 6px;">{{ tc.id }}</span>
+                </div>
+                <pre style="margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.5; color: var(--el-text-color-regular);">{{ parseToolInput(tc.input) }}</pre>
+              </div>
+            </details>
+            <template v-if="msg.content">
+              <template v-if="isJsonContent(msg.content)">
+                <details v-if="isLongContent(msg.content)" style="font-size: 14px;">
+                  <summary style="cursor: pointer; color: var(--el-text-color-secondary); margin-bottom: 4px;">📄 JSON ({{ msg.content.length }} 字符)</summary>
+                  <pre style="margin: 0; white-space: pre-wrap; word-break: break-word; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.6;">{{ formatContent(msg.content) }}</pre>
+                </details>
+                <pre v-else style="margin: 0; white-space: pre-wrap; word-break: break-word; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.6;">{{ formatContent(msg.content) }}</pre>
+              </template>
+              <template v-else>
+                <details v-if="isLongContent(msg.content)" style="font-size: 14px;">
+                  <summary style="cursor: pointer; color: var(--el-text-color-secondary); margin-bottom: 4px;">📄 内容 ({{ msg.content.length }} 字符)</summary>
+                  <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
+                </details>
+                <div v-else class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
+              </template>
+            </template>
+            <span v-else-if="!msg.reasoning && !(msg.tool_calls && msg.tool_calls.length)" style="color: #999; font-style: italic">无内容</span>
           </div>
         </div>
         <el-empty v-if="!msgLoading && messages.length === 0" description="无消息记录" :image-size="60" />
@@ -348,5 +413,82 @@ onMounted(async () => {
   background: var(--el-color-primary-light-3);
   min-width: 2px;
   transition: width 0.2s;
+}
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4),
+.markdown-body :deep(h5),
+.markdown-body :deep(h6) {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.markdown-body :deep(h1) { font-size: 1.5em; }
+.markdown-body :deep(h2) { font-size: 1.3em; }
+.markdown-body :deep(h3) { font-size: 1.15em; }
+.markdown-body :deep(p) { margin: 8px 0; }
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) { margin: 8px 0; padding-left: 24px; }
+.markdown-body :deep(li) { margin: 4px 0; }
+.markdown-body :deep(code) {
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--el-fill-color-light);
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+}
+.markdown-body :deep(pre) {
+  margin: 8px 0;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--el-fill-color-darker);
+  overflow-x: auto;
+}
+.markdown-body :deep(pre code) {
+  padding: 0;
+  background: none;
+  font-size: 13px;
+}
+.markdown-body :deep(blockquote) {
+  margin: 8px 0;
+  padding: 8px 16px;
+  border-left: 4px solid var(--el-border-color);
+  color: var(--el-text-color-secondary);
+}
+.markdown-body :deep(table) {
+  margin: 8px 0;
+  border-collapse: collapse;
+  width: 100%;
+}
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  padding: 6px 12px;
+  border: 1px solid var(--el-border-color);
+  text-align: left;
+}
+.markdown-body :deep(th) {
+  background: var(--el-fill-color-light);
+  font-weight: 600;
+}
+.markdown-body :deep(a) {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+.markdown-body :deep(a:hover) {
+  text-decoration: underline;
+}
+.markdown-body :deep(hr) {
+  margin: 16px 0;
+  border: none;
+  border-top: 1px solid var(--el-border-color);
+}
+.markdown-body :deep(img) {
+  max-width: 100%;
 }
 </style>
