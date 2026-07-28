@@ -164,7 +164,7 @@ async def handle_message(
         feishu_chat_id = chat.id
         ws = await db.get(Workspace, ws_id)
         provider = make_provider(ws.model_config)
-        registry, skill_descriptions, mcp_cleanup = await build_registry(db, ws_id, provider)
+        registry, skill_descriptions = await build_registry(db, ws_id, provider)
         cwd = await resolve_cwd(db, ws)
         ctx_cfg = ContextConfig.from_ws(ws.context_config)
 
@@ -218,19 +218,12 @@ async def handle_message(
         else None
     )
 
-    # MCP 连接在 Run 结束后关闭（成功 / 失败 / 中断 / 取消均执行）
+    # MCP 连接生命周期由 _execute_run 管理（connect + close 同任务，避免 anyio cancel scope 跨任务退出）
+
     orig_on_done = callbacks.on_done
 
-    async def _on_done_with_cleanup(exc: Exception | None) -> None:
-        try:
-            if mcp_cleanup is not None:
-                await mcp_cleanup()
-        except Exception:
-            log.exception("mcp cleanup failed")
-        await orig_on_done(exc)
-
     async def _on_done_with_reaction(exc: Exception | None) -> None:
-        await _on_done_with_cleanup(exc)
+        await orig_on_done(exc)
         if reaction_id:
             try:
                 await client.delete_reaction(ctx.message_id, reaction_id)

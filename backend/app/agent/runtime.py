@@ -95,14 +95,15 @@ def make_summary_provider(cfg: ContextConfig) -> Provider:
 
 async def build_registry(
     db: AsyncSession, ws_id: int, provider: Provider
-) -> tuple[ToolRegistry, list[str], McpCleanup]:
-    """WS 工具注册表 = 内置 6 工具 + Agent 子代理工具 + 挂载 Skill + 挂载 MCP。
+) -> tuple[ToolRegistry, list[str]]:
+    """WS 工具注册表 = 内置 6 工具 + Agent 子代理工具 + 挂载 Skill（不含 MCP）。
 
     ``provider`` 用于构造 ``AgentTool``（子代理复用父 provider，design D33）。
 
-    返回 (registry, skill_descriptions, mcp_cleanup)：
+    返回 (registry, skill_descriptions)：
     - descriptions 用于 system prompt 的「可用 Skills」段（D16 阶段 1 元信息注入）
-    - mcp_cleanup 在 Run 结束后调用，关闭 MCP 客户端连接（无 MCP 时为 None）
+    - MCP 工具由 ``register_mcp_tools`` 在 _execute_run 任务中单独注册，
+      确保 connect / close 在同一任务（anyio cancel scope 任务局部性）。
     """
     registry = ToolRegistry()
     for tool in (ReadTool(), GlobTool(), GrepTool(), WriteTool(), EditTool(), BashTool()):
@@ -112,21 +113,32 @@ async def build_registry(
         registry.register(skill_tool)
         skill_descriptions.append(f"{skill_tool.name}: {skill_tool.description}")
 
-    mcp_tools, mcp_clients = await build_mcp_tools(db, ws_id)
-    for tool in mcp_tools:
-        registry.register(tool)
-
     # Agent 子代理工具（D33）：复用父 provider/registry，深度 1 防递归；并行度 semaphore 限流
     from app.agent.subagent import AgentTool
 
     semaphore = asyncio.Semaphore(settings.agent_max_concurrency)
     registry.register(AgentTool(provider, registry, semaphore))
 
+    return registry, skill_descriptions
+
+
+async def register_mcp_tools(
+    db: AsyncSession, ws_id: int, registry: ToolRegistry
+) -> McpCleanup:
+    """在 Run 任务中连接 MCP 服务并注册工具到 registry。
+
+    返回 cleanup 闭包（关闭 MCP 连接），**须在调用方同一任务中执行**。
+    anyio cancel scope 是任务局部的，跨任务 close 会抛 RuntimeError。
+    """
+    mcp_tools, mcp_clients = await build_mcp_tools(db, ws_id)
+    for tool in mcp_tools:
+        registry.register(tool)
+
     async def _mcp_cleanup() -> None:
         for c in mcp_clients:
             await c.close()
 
-    return registry, skill_descriptions, (_mcp_cleanup if mcp_clients else None)
+    return _mcp_cleanup if mcp_clients else None
 
 
 async def resolve_cwd(db: AsyncSession, ws: Workspace) -> str:
@@ -177,6 +189,7 @@ __all__ = [
     "fetch_quote_text",
     "make_provider",
     "make_summary_provider",
+    "register_mcp_tools",
     "resolve_cwd",
 ]
 

@@ -55,7 +55,7 @@ async def _seed_ws_with_repo_and_skill():
 async def test_build_registry_builtins_and_skills():
     ws_id, _, skill_name = await _seed_ws_with_repo_and_skill()
     async with async_session_factory() as db:
-        registry, descs, mcp_cleanup = await build_registry(db, ws_id, make_provider())
+        registry, descs = await build_registry(db, ws_id, make_provider())
     names = set(registry.names())
     assert {"Read", "Glob", "Grep", "Write", "Edit", "Bash"} <= names
     assert "Agent" in names  # T5.9：子代理工具已接线进 build_registry
@@ -63,8 +63,6 @@ async def test_build_registry_builtins_and_skills():
     assert any(f"skill__{skill_name}" in d for d in descs)
     assert registry.is_readonly("Read")
     assert not registry.is_readonly("Write")
-    # 无 MCP 挂载时 cleanup 为 None
-    assert mcp_cleanup is None
 
 
 async def test_resolve_cwd_prefers_cwd_repo_id():

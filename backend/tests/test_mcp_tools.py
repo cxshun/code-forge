@@ -1,11 +1,11 @@
-"""MCP 工具测试：decrypt_secrets / McpTool 属性 / build_mcp_tools 降级 / build_registry cleanup。
+"""MCP 工具测试：decrypt_secrets / McpTool 属性 / build_mcp_tools 降级 / register_mcp_tools cleanup。
 
 不连真实 MCP 服务——用 monkeypatch / mock client 验证接线与降级行为。
 """
 
 import pytest
 
-from app.agent.runtime import build_registry, make_provider
+from app.agent.runtime import build_registry, make_provider, register_mcp_tools
 from app.config import settings
 from app.core.security import decrypt_secrets, encrypt_secrets
 from app.db.models import MCP, User, Workspace, WorkspaceMcp
@@ -218,7 +218,7 @@ async def test_build_mcp_tools_no_mounts():
 
 
 async def test_build_registry_with_mcp(monkeypatch):
-    """build_registry 返回 MCP 工具 + cleanup 回调。"""
+    """build_registry + register_mcp_tools 注册 MCP 工具并返回 cleanup 回调。"""
     ws_id, _ = await _seed_ws_with_mcp(read_only=True)
 
     async def _fake_connect(self):
@@ -228,7 +228,8 @@ async def test_build_registry_with_mcp(monkeypatch):
     monkeypatch.setattr(McpClient, "connect", _fake_connect)
 
     async with async_session_factory() as db:
-        registry, _descs, mcp_cleanup = await build_registry(db, ws_id, make_provider())
+        registry, _descs = await build_registry(db, ws_id, make_provider())
+        mcp_cleanup = await register_mcp_tools(db, ws_id, registry)
 
     names = set(registry.names())
     assert "mcp__lookup" in names
@@ -240,7 +241,7 @@ async def test_build_registry_with_mcp(monkeypatch):
 
 
 async def test_build_registry_without_mcp_returns_none_cleanup():
-    """无 MCP 挂载时 cleanup 为 None。"""
+    """无 MCP 挂载时 register_mcp_tools 返回 None。"""
     async with async_session_factory() as s:
         u = User(username="u3", password_hash="x", role="admin")
         s.add(u)
@@ -254,6 +255,7 @@ async def test_build_registry_without_mcp_returns_none_cleanup():
         ws_id = ws.id
 
     async with async_session_factory() as db:
-        registry, _, mcp_cleanup = await build_registry(db, ws_id, make_provider())
+        registry, _ = await build_registry(db, ws_id, make_provider())
+        mcp_cleanup = await register_mcp_tools(db, ws_id, registry)
     assert mcp_cleanup is None
     assert {"Read", "Write", "Bash"} <= set(registry.names())

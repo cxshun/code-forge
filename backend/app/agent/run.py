@@ -259,6 +259,16 @@ async def _execute_run(
     await _set_run_status(run_id, RunStatus.running.value, started=True)
     log.info("run %d started: ws=%s session=%d model=%s", run_id, ws_id, session_id, provider.model)
 
+    # MCP 连接（须在本任务中建立，确保与 close 同任务——anyio cancel scope 任务局部性）
+    mcp_cleanup = None
+    try:
+        async with async_session_factory() as db:
+            from app.agent.runtime import register_mcp_tools
+
+            mcp_cleanup = await register_mcp_tools(db, ws_id, registry)
+    except Exception:
+        log.warning("run %d: MCP tools registration failed", run_id, exc_info=True)
+
     trace_ctx = init_trace(ws_id, feishu_chat_id, session_id, run_id)
     try:
         async with span("run"):
@@ -312,6 +322,12 @@ async def _execute_run(
         await _set_run_status(run_id, RunStatus.error.value, error=str(e))
         raise
     finally:
+        # MCP 连接清理（须与 register_mcp_tools 同任务——anyio cancel scope 任务局部性）
+        if mcp_cleanup is not None:
+            try:
+                await mcp_cleanup()
+            except Exception:
+                log.warning("run %d: MCP cleanup failed", run_id, exc_info=True)
         # 确保 trace 数据落库（§7.4：Run 结束前 flush 本 trace）
         try:
             await span_buffer.flush_trace(trace_ctx.trace_id)
