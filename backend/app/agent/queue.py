@@ -21,11 +21,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from redis.asyncio import Redis
+from redis.asyncio import Redis  # noqa: F401（向后兼容，外部可能 import）
 
 from app.agent.context import ContextManager
 from app.agent.lock import WsLock
 from app.agent.run import _create_run, _execute_run, _set_run_status
+from app.core.coordination import CoordinationBackend
 from app.core.redis_client import redis as redis_client
 from app.db.models import RunStatus
 from app.providers.base import Provider
@@ -101,8 +102,8 @@ async def _maybe(cb, *args) -> None:
 class RunQueue:
     """同 WS 串行调度 Run，提供排队位置反馈与取消 / 中断。"""
 
-    def __init__(self, redis: Redis) -> None:
-        self._redis = redis
+    def __init__(self, backend: CoordinationBackend) -> None:
+        self._backend = backend
         self._active: dict[int, _ActiveRun] = {}
         self._conds: dict[int, asyncio.Condition] = {}
 
@@ -143,9 +144,9 @@ class RunQueue:
         session_id, run_id = await _create_run(ws_id, feishu_chat_id, trigger_message_id)
 
         # FIFO 入队（自增 seq 作 score，跨进程单调）
-        seq = await self._redis.incr(self._seqkey(ws_id))
-        await self._redis.zadd(self._qkey(ws_id), {str(run_id): seq})
-        rank = await self._redis.zrank(self._qkey(ws_id), str(run_id))
+        seq = await self._backend.incr(self._seqkey(ws_id))
+        await self._backend.zadd(self._qkey(ws_id), {str(run_id): seq})
+        rank = await self._backend.zrank(self._qkey(ws_id), str(run_id))
         ahead = rank if rank is not None else 0
 
         params = _RunParams(
@@ -173,7 +174,7 @@ class RunQueue:
         return run_id
 
     async def _drive(self, ar: _ActiveRun) -> None:
-        lock = WsLock(self._redis, ar.ws_id)
+        lock = WsLock(self._backend, ar.ws_id)
         drive_exc: Exception | None = None
         try:
             await self._wait_turn(ar, lock)
@@ -213,7 +214,7 @@ class RunQueue:
                 await lock.release()  # 未抢到锁时为幂等 no-op
             except Exception:
                 log.exception("run %d lock release failed", ar.run_id)
-            await self._redis.zrem(self._qkey(ar.ws_id), str(ar.run_id))
+            await self._backend.zrem(self._qkey(ar.ws_id), str(ar.run_id))
             cond = self._conds.get(ar.ws_id)
             if cond is not None:
                 async with cond:
@@ -234,7 +235,7 @@ class RunQueue:
             while True:
                 if ar.cancelled.is_set():
                     raise RunCancelled()
-                rank = await self._redis.zrank(self._qkey(ar.ws_id), str(ar.run_id))
+                rank = await self._backend.zrank(self._qkey(ar.ws_id), str(ar.run_id))
                 if rank is None:
                     # 已被移出队列（外部 zrem / cancel）→ 视为取消
                     raise RunCancelled()
@@ -254,7 +255,7 @@ class RunQueue:
             return False
         ar.cancelled.set()
         # 立即出队 + 唤醒 _wait_turn
-        await self._redis.zrem(self._qkey(ar.ws_id), str(run_id))
+        await self._backend.zrem(self._qkey(ar.ws_id), str(run_id))
         cond = self._cond(ar.ws_id)
         async with cond:
             cond.notify_all()

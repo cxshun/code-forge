@@ -2,9 +2,13 @@
 
 基于 pydantic-settings，按环境变量加载（dev/prod/test）。凭证（DB / Redis / 飞书 /
 Anthropic key）以占位默认值给出，生产由 ``.env`` 注入。对齐 design §3.1 与 D32。
+
+零外部依赖（D-ZD.8）：``database_url`` 和 ``redis_url`` 留空时自动使用内置
+SQLite + MemoryBackend，开箱即用；填入 DSN / URL 则切换到 PostgreSQL / Redis。
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -27,11 +31,14 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # PostgreSQL（异步 asyncpg）
-    pg_dsn: str = "postgresql+asyncpg://codeforge:codeforge@localhost:5432/codeforge"
+    # 数据库（留空 = 内置 SQLite，填 DSN = PostgreSQL）
+    database_url: str = ""
 
-    # Redis（任务队列 / 事件总线 / 缓存）
-    redis_url: str = "redis://localhost:6379/0"
+    # Redis（留空 = 内置 MemoryBackend，填 URL = Redis）
+    redis_url: str = ""
+
+    # SQLite 数据库文件路径（仅 database_url 为空时生效）
+    sqlite_path: str = ""
 
     # 凭证加密主密钥（D32 / NF4.2.4），生产必须注入
     secret_key: str = "dev-insecure-secret-key-change-me"
@@ -68,6 +75,11 @@ class Settings(BaseSettings):
     session_cookie_name: str = "cf_session"
     session_ttl_seconds: int = 60 * 60 * 24 * 7  # 7 天
 
+    # 初始管理员账号（首次启动自动创建，幂等）
+    # dev/test 未设密码时用固定 "admin"，prod 未设则跳过并告警
+    init_admin_username: str = "admin"
+    init_admin_password: str = ""
+
     # TTL 清理（T10.4）
     span_ttl_days: int = 30
     payload_ttl_days: int = 7
@@ -88,17 +100,51 @@ class Settings(BaseSettings):
         return self.app_env == "test"
 
     @property
-    def pg_dsn_effective(self) -> str:
-        """实际 DSN：test 环境强制切到 ``codeforge_test`` 库，避免污染 dev/prod。
+    def is_postgresql(self) -> bool:
+        """是否使用 PostgreSQL（database_url 非空）。"""
+        return bool(self.database_url)
 
-        测试 fixture 的 ``reset_all()`` 会全表 TRUNCATE，必须隔离到独立测试库。
+    @property
+    def is_redis(self) -> bool:
+        """是否使用 Redis（redis_url 非空）。"""
+        return bool(self.redis_url)
+
+    # ---- 向后兼容别名 ----
+
+    @property
+    def pg_dsn(self) -> str:
+        """向后兼容：等价于 database_url。"""
+        return self.database_url
+
+    @property
+    def _sqlite_path_resolved(self) -> str:
+        """SQLite 文件路径（默认 {data_dir}/sqlite/codeforge.db）。"""
+        if self.sqlite_path:
+            return self.sqlite_path
+        return f"{self.data_dir}/sqlite/codeforge.db"
+
+    @property
+    def database_url_effective(self) -> str:
+        """实际数据库 URL。
+
+        - database_url 非空 → PostgreSQL（test 环境强制切到 codeforge_test 库）
+        - database_url 空   → SQLite（test 环境用 codeforge_test.db 文件）
         """
-        url = make_url(self.pg_dsn)
+        if self.database_url:
+            url = make_url(self.database_url)
+            if self.is_test:
+                url = url.set(database="codeforge_test")
+            return url.render_as_string(hide_password=False)
+        path = Path(self._sqlite_path_resolved)
+        path.parent.mkdir(parents=True, exist_ok=True)
         if self.is_test:
-            url = url.set(database="codeforge_test")
-        # SQLAlchemy 2.0 起 str(url) 默认把密码渲染为 `***`，会导致拿此串去连接时
-        # 认证失败（InvalidPasswordError）。必须显式保留真实密码。
-        return url.render_as_string(hide_password=False)
+            return f"sqlite+aiosqlite:///{path.parent}/codeforge_test.db"
+        return f"sqlite+aiosqlite:///{path}"
+
+    @property
+    def pg_dsn_effective(self) -> str:
+        """向后兼容：等价于 database_url_effective。"""
+        return self.database_url_effective
 
     @property
     def workspaces_root(self) -> str:

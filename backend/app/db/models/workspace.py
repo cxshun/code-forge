@@ -11,8 +11,7 @@ WS）、D11（N:N 挂载）、D34（WS 级上下文配置）。
 
 import enum
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -33,10 +32,10 @@ class Workspace(Base, TimestampMixin):
     # WS 级上下文管理策略（D34）：enabled / trigger1 / trigger2 / clear_keep /
     # compact_recent / summary_provider / summary_model / compact_instructions / exclude_tools
     # P3 新增：summary_budget_pct / compact_recursive
-    context_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    context_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # WS 级模型配置（P3 D-CE.6）：provider / model / api_base_url / api_key_enc
     # None / 空 → fallback 到 settings 全局
-    model_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    model_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class FeishuChat(Base, TimestampMixin):

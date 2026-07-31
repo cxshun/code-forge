@@ -5,8 +5,7 @@
 
 import enum
 
-from sqlalchemy import ForeignKey, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -28,7 +27,7 @@ class Task(Base, TimestampMixin):
         String(32), default=TaskStatus.pending.value, nullable=False, index=True
     )
     progress: Mapped[float] = mapped_column(default=0.0, nullable=False)
-    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True

@@ -14,6 +14,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
@@ -38,17 +39,17 @@ from app.api.workspaces import router as workspaces_router
 from app.config import settings
 from app.core.errors import CODE_BY_STATUS
 from app.core.logging import configure_logging, get_logger
+from app.core.security import decrypt_secret
+from app.db.base import Base
+from app.db.init import ensure_admin_user
+from app.db.models import FeishuApp
+from app.db.session import async_session_factory, engine
+from app.feishu.handler import handle_message
+from app.feishu.ws_pool import ws_pool
 from app.observability.buffer import span_buffer
 from app.observability.monitor import monitor_loop
 from app.observability.ttl import ttl_loop
 from app.tasks.runner import task_runner
-from sqlalchemy import select
-
-from app.core.security import decrypt_secret
-from app.db.models import FeishuApp
-from app.db.session import async_session_factory
-from app.feishu.handler import handle_message
-from app.feishu.ws_pool import ws_pool
 
 # 模块导入即配置日志，确保任何入口（含测试）拿到结构化 logger。
 configure_logging()
@@ -58,6 +59,13 @@ log = get_logger("app.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("app.starting", env=settings.app_env, version=__version__)
+    # SQLite 模式自动建表（零依赖开箱即用）；PostgreSQL 需手动 alembic upgrade head
+    if not settings.is_postgresql:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        log.info("db.tables_auto_created")
+    # 首次启动自动创建管理员账号（幂等，dev 默认 admin/admin）
+    await ensure_admin_user()
     # 启动恢复（D36）：遗留异步任务标 failed，避免幽灵任务
     orphans = await task_runner.recover_orphans()
     if orphans:

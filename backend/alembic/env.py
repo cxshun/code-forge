@@ -18,7 +18,7 @@ from app.db.base import Base
 
 config = context.config
 # 用运行时配置覆盖 ini 里的占位 url
-config.set_main_option("sqlalchemy.url", settings.pg_dsn)
+config.set_main_option("sqlalchemy.url", settings.database_url_effective)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -34,6 +34,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -44,6 +45,7 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()

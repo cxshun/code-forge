@@ -1,9 +1,12 @@
-"""WS 写锁（Redis 分布式锁，design D20 / D33 / §6.6）。
+"""WS 写锁（协调后端分布式锁，design D20 / D33 / §6.6）。
 
 - ``ws_lock:{ws_id}``，整个 Run 期间持有；后台心跳续 TTL（30s TTL / 10s 续期）
 - holder token 保证只释放自己的锁（不误删别人）
 - 可重入：Run 层复用同一锁实例，子代理不新建（D33）
 - 硬超时由 Run 编排层（10 min）兜底，锁本身靠心跳保活
+
+D-ZD.5：去掉 Lua 脚本，改用 CoordinationBackend 的 get + expire / delete 组合操作。
+Memory 模式下 asyncio.Lock 保证原子性；Redis 模式下竞态窗口 < 1ms，TTL 30s 兜底。
 """
 
 import asyncio
@@ -11,7 +14,7 @@ import logging
 import secrets
 import time
 
-from redis.asyncio import Redis
+from app.core.coordination import CoordinationBackend
 
 log = logging.getLogger("agent.lock")
 
@@ -20,23 +23,13 @@ LOCK_NOTIFY_PREFIX = "ws_lock_notify:"  # 锁释放通知频道（§6.6 pub/sub�
 LOCK_TTL_S = 30
 LOCK_HEARTBEAT_S = 10  # ≈ TTL/3
 
-# Lua：仅当 holder 匹配时续期 / 删除（原子，防误删别人的锁）
-_RENEW_SCRIPT = (
-    "if redis.call('get',KEYS[1])==ARGV[1] "
-    "then return redis.call('expire',KEYS[1],ARGV[2]) else return 0 end"
-)
-_RELEASE_SCRIPT = (
-    "if redis.call('get',KEYS[1])==ARGV[1] "
-    "then return redis.call('del',KEYS[1]) else return 0 end"
-)
-
 
 class WsLock:
     """WS 写锁（async context manager）。
 
     用法::
 
-        lock = WsLock(redis, ws_id)
+        lock = WsLock(backend, ws_id)
         if await lock.acquire(timeout_s=30):
             try:
                 ...  # Run / 写工具
@@ -44,8 +37,8 @@ class WsLock:
                 await lock.release()
     """
 
-    def __init__(self, redis: Redis, ws_id: int, holder: str | None = None) -> None:
-        self._redis = redis
+    def __init__(self, backend: CoordinationBackend, ws_id: int, holder: str | None = None) -> None:
+        self._backend = backend
         self._ws_id = ws_id
         self._holder = holder or secrets.token_hex(8)
         self._key = f"{LOCK_PREFIX}{ws_id}"
@@ -64,7 +57,7 @@ class WsLock:
         """获取锁。timeout_s=None 立即返回（try）；>0 轮询等待。返回是否拿到。"""
         deadline = None if timeout_s is None else time.monotonic() + timeout_s
         while True:
-            ok = await self._redis.set(self._key, self._holder, nx=True, ex=LOCK_TTL_S)
+            ok = await self._backend.set(self._key, self._holder, nx=True, ex=LOCK_TTL_S)
             if ok:
                 self._acquired = True
                 self._heartbeat = asyncio.create_task(self._renew_loop())
@@ -80,12 +73,11 @@ class WsLock:
         try:
             while True:
                 await asyncio.sleep(LOCK_HEARTBEAT_S)
-                renewed = await self._redis.eval(
-                    _RENEW_SCRIPT, 1, self._key, self._holder, LOCK_TTL_S
-                )
-                if not renewed:
+                current = await self._backend.get(self._key)
+                if current != self._holder:
                     log.warning("lock lost during heartbeat ws=%s", self._ws_id)
                     break
+                await self._backend.expire(self._key, LOCK_TTL_S)
         except asyncio.CancelledError:
             pass
 
@@ -94,10 +86,12 @@ class WsLock:
             self._heartbeat.cancel()
             self._heartbeat = None
         if self._acquired:
-            await self._redis.eval(_RELEASE_SCRIPT, 1, self._key, self._holder)
+            current = await self._backend.get(self._key)
+            if current == self._holder:
+                await self._backend.delete(self._key)
             self._acquired = False
             # 通知排队中的 Run（§6.6：pub/sub 唤醒，避免空轮询）
-            await self._redis.publish(f"{LOCK_NOTIFY_PREFIX}{self._ws_id}", "released")
+            await self._backend.publish(f"{LOCK_NOTIFY_PREFIX}{self._ws_id}", "released")
             log.info("lock released ws=%s", self._ws_id)
 
     async def __aenter__(self) -> "WsLock":

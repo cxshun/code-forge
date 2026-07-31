@@ -1,10 +1,23 @@
-"""Redis 客户端（session / 限流 / 任务队列 / 事件总线 / 缓存）。
+"""协调后端单例（D-ZD.4）。
 
-对齐 design §3.3。async 客户端，decode_responses=True（直接拿 str）。
+redis_url 非空 → RedisBackend（Redis）
+redis_url 空   → MemoryBackend（纯内存）
+
+上层代码统一使用 ``CoordinationBackend`` 接口，不感知后端类型。
 """
 
-from redis.asyncio import Redis
-
 from app.config import settings
+from app.core.coordination import CoordinationBackend, MemoryBackend
 
-redis: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
+if settings.is_redis:
+    from redis.asyncio import Redis
+
+    from app.core.coordination import RedisBackend
+
+    redis: CoordinationBackend = RedisBackend(
+        Redis.from_url(settings.redis_url, decode_responses=True)
+    )
+else:
+    redis: CoordinationBackend = MemoryBackend()
+
+__all__ = ["redis"]

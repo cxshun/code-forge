@@ -8,8 +8,7 @@ secret 字段（token / header 凭证）加密存储。read_only=True 时豁免�
 
 import enum
 
-from sqlalchemy import ForeignKey, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import ForeignKey, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -28,7 +27,7 @@ class MCP(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(32), nullable=False)
     # 配置（含可能的加密 secret 字段），结构因 type 而异
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False)
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
     )

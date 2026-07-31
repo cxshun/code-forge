@@ -11,8 +11,7 @@ span_id / trace_id 用 UUID hex（String(32)），parent_span_id 自引用。
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -100,7 +99,7 @@ class Span(Base, TimestampMixin):
     payload_truncated: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # 扩展属性（OTel gen_ai.* 预留）
-    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 时间与耗时
     started_at: Mapped[datetime] = mapped_column(
