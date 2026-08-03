@@ -23,9 +23,13 @@ _MEMORY_PREFIX = "memory/"
 
 
 def cwd_root(ctx: ToolContext) -> Path:
-    """工具的工作目录根：repos/{cwd} 或 repos/。"""
-    repos = Path(ctx.workspaces_root) / str(ctx.ws_id) / "repos"
-    return (repos / ctx.cwd) if ctx.cwd else repos
+    """工具的工作目录根：repos/{cwd}；无 repo 绑定时抛 PermissionError。
+
+    无 repo 时不应允许文件操作——退化为 repos/ 会让 AI 浏览到残留的未注册目录，
+    误判为已绑定项目。"""
+    if not ctx.cwd:
+        raise PermissionError("当前工作空间未绑定项目，无法执行文件操作")
+    return Path(ctx.workspaces_root) / str(ctx.ws_id) / "repos" / ctx.cwd
 
 
 def memory_root(ctx: ToolContext) -> Path | None:

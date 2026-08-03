@@ -47,9 +47,19 @@ async def auto_bind_p2p_chat(
     - 其他异常 → rollback 后返回 None（不向上抛，NF2.4）
     """
     if owner_id is None:
+        log.info("auto_bind skipped: p2p_workspace_owner_id 未配置")
         return None
     owner = await db.get(User, owner_id)
-    if owner is None or owner.status != UserStatus.active.value:
+    if owner is None:
+        log.warning(
+            "auto_bind skipped: owner_id=%s 的用户不存在", owner_id
+        )
+        return None
+    if owner.status != UserStatus.active.value:
+        log.warning(
+            "auto_bind skipped: owner_id=%s 状态为 %s，需要 active",
+            owner_id, owner.status,
+        )
         return None
 
     if sender_name:

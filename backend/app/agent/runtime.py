@@ -146,7 +146,7 @@ async def resolve_cwd(db: AsyncSession, ws: Workspace) -> str:
 
     - ``ws.cwd_repo_id`` 指定且 repo 属于本 WS → str(repo_id)
     - 否则取第一个挂载 repo → str(repo_id)
-    - 无 repo → ""（工具 cwd_root 退化为 repos/，加载器不注入 Repo 级 AGENT.md）
+    - 无 repo → ""（工具 cwd_root 抛 PermissionError，加载器不注入 Repo 级 AGENT.md）
     """
     if ws.cwd_repo_id:
         repo = await db.get(GitRepo, ws.cwd_repo_id)
