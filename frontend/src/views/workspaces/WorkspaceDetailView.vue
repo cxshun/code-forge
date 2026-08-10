@@ -586,7 +586,7 @@ onMounted(fetchDetail)
         </el-card>
 
         <el-table :data="chats">
-          <el-table-column prop="app_id" label="App ID" width="150" />
+          <el-table-column prop="app_id" label="App ID" width="200" show-overflow-tooltip />
           <el-table-column prop="chat_name" label="群名称" />
           <el-table-column prop="chat_id" label="Chat ID" width="200" />
           <el-table-column label="操作" width="100" align="center">

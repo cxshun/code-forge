@@ -30,25 +30,39 @@ def _event_to_dict(data) -> dict:
     mentions = []
     for m in msg.mentions or []:
         mid = getattr(m, "id", None)
-        mentions.append({"id": {"open_id": getattr(mid, "open_id", "")}, "name": getattr(m, "name", "")})
+        mentions.append({
+            "id": {"open_id": getattr(mid, "open_id", "") or ""},
+            "name": getattr(m, "name", "") or "",
+        })
     return {
         "header": {"app_id": data.header.app_id},
         "event": {
             "sender": {
-                "sender_id": {"open_id": getattr(getattr(sender, "sender_id", None), "open_id", "")}
+                "sender_id": {
+                    "open_id": getattr(getattr(sender, "sender_id", None), "open_id", "") or ""
+                }
             },
             "message": {
                 "message_id": msg.message_id,
                 "chat_id": msg.chat_id,
-                "chat_type": getattr(msg, "chat_type", ""),
-                "message_type": msg.message_type,
-                "content": msg.content,
+                "chat_type": getattr(msg, "chat_type", "") or "",
+                "message_type": msg.message_type or "",
+                "content": msg.content or "",
                 "parent_id": getattr(msg, "parent_id", None),
                 "root_id": getattr(msg, "root_id", None),
                 "mentions": mentions,
             },
         },
     }
+
+
+def _on_future_done(fut) -> None:
+    """Future 异常回调：防止 handle_message 异常被静默吞噬。"""
+    if fut.cancelled():
+        return
+    exc = fut.exception()
+    if exc is not None:
+        log.error("handle_message failed: %s", exc, exc_info=exc)
 
 
 class WsPool:
@@ -80,10 +94,11 @@ class WsPool:
                 except Exception:
                     log.exception("event_to_dict failed")
                     return
-                asyncio.run_coroutine_threadsafe(
+                fut = asyncio.run_coroutine_threadsafe(
                     self._handler(event_dict, app_id, app_secret),
                     self._business_loop,
                 )
+                fut.add_done_callback(_on_future_done)
 
         builder = EventDispatcherHandlerBuilder("", "")
         handler = builder.register_p2_im_message_receive_v1(on_evt).build()

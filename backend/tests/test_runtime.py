@@ -162,3 +162,30 @@ async def test_fetch_quote_text_get_message_none():
 
 async def test_fetch_quote_text_swallows_exception():
     assert await fetch_quote_text(_FakeClient(exc=RuntimeError("boom")), "om_x") is None
+
+
+async def test_fetch_quote_text_interactive_card():
+    """引用卡片消息时提取卡片文本。"""
+    import json as _json
+
+    card = {
+        "config": {},
+        "header": {"title": {"tag": "plain_text", "content": "Code Forge"}},
+        "elements": [{"tag": "markdown", "content": "任务已完成"}],
+    }
+    data = _FakeMsgData([_FakeMsg(_json.dumps(card), "interactive")])
+    out = await fetch_quote_text(_FakeClient(data), "om_x")
+    assert out is not None
+    assert "任务已完成" in out
+    assert out.startswith("**引用消息：**")
+
+
+async def test_fetch_quote_text_interactive_card_empty():
+    """引用卡片无可提取文本时返回 fallback 标注。"""
+    import json as _json
+
+    card = {"config": {}, "elements": [{"tag": "divider"}]}
+    data = _FakeMsgData([_FakeMsg(_json.dumps(card), "interactive")])
+    out = await fetch_quote_text(_FakeClient(data), "om_x")
+    assert out is not None
+    assert "卡片消息" in out

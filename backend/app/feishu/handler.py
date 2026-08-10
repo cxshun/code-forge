@@ -102,8 +102,18 @@ class FeishuRunCallbacks:
 async def handle_message(
     event_dict: dict, app_id: str, app_secret: str, bot_open_id: str | None = None
 ) -> None:
+    try:
+        await _handle_message_impl(event_dict, app_id, app_secret, bot_open_id)
+    except Exception:
+        log.exception("handle_message unhandled error: app=%s", app_id)
+
+
+async def _handle_message_impl(
+    event_dict: dict, app_id: str, app_secret: str, bot_open_id: str | None = None
+) -> None:
     ctx = parse_message_event(event_dict, bot_open_id)
     if ctx is None:
+        log.info("parse_message_event returned None: app=%s", app_id)
         return
 
     # 触发条件（D-DC.1）：
@@ -163,6 +173,9 @@ async def handle_message(
         ws_id = chat.workspace_id
         feishu_chat_id = chat.id
         ws = await db.get(Workspace, ws_id)
+        if ws is None:
+            log.warning("workspace %s not found, skip: %s", ws_id, ctx.message_id)
+            return
         provider = make_provider(ws.model_config)
         registry, skill_descriptions = await build_registry(db, ws_id, provider)
         cwd = await resolve_cwd(db, ws)
@@ -206,6 +219,7 @@ async def handle_message(
         return
 
     # D39 引用回复注入（parent_id → 拉被引用正文前置为引用块）
+    log.info("quote check: parent_id=%s text=%r", ctx.parent_id, ctx.text[:100])
     quote = await fetch_quote_text(client, ctx.parent_id)
     user_message = f"{quote}\n{ctx.text}" if quote else ctx.text
 

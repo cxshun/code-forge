@@ -171,14 +171,31 @@ async def fetch_quote_text(client: FeishuClient, parent_id: str | None) -> str |
         log.warning("fetch quote failed: %s", parent_id, exc_info=True)
         return None
     if data is None or not data.items:
+        log.warning("quote msg not found or empty items: %s", parent_id)
         return None
     msg = data.items[0]
     body = getattr(msg, "body", None)
     content = getattr(body, "content", None) if body is not None else None
+    msg_type = getattr(msg, "msg_type", "") or ""
+    log.info(
+        "quote msg: parent=%s msg_type=%r content_len=%s content_preview=%r",
+        parent_id, msg_type,
+        len(content) if content else 0,
+        (content[:200] if content else "None"),
+    )
     if not content:
         return None
-    text = extract_plain_text(content, getattr(msg, "msg_type", "") or "")
+    try:
+        text = extract_plain_text(content, msg_type)
+    except Exception:
+        log.warning("extract_plain_text failed: %s", parent_id, exc_info=True)
+        if msg_type == "interactive":
+            return "（引用的是一条卡片消息，无法提取文本）\n"
+        return None
+    log.info("quote extracted text len=%s preview=%r", len(text), text[:200])
     if not text:
+        if msg_type == "interactive":
+            return "（引用的是一条卡片消息，无法提取文本）\n"
         return None
     quoted = "\n".join(f"> {line}" for line in text.splitlines())
     return f"**引用消息：**\n{quoted}\n"
