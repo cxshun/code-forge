@@ -5,16 +5,15 @@
 - 幂等：同名用户已存在则跳过，绝不覆盖密码
 """
 
-import logging
-
 from sqlalchemy import select
 
 from app.config import settings
+from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.db.models import User, UserStatus
 from app.db.session import async_session_factory
 
-log = logging.getLogger("db.init")
+log = get_logger("db.init")
 
 DEV_DEFAULT_PASSWORD = "admin"
 
