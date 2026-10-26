@@ -8,6 +8,39 @@
 - 接口设计：[docs/mvp/api.md](docs/mvp/api.md)
 - 任务列表：[docs/mvp/task.md](docs/mvp/task.md)
 
+## 界面预览
+
+**登录 / 工作空间** —— 以工作空间为一等公民，绑定飞书群、Git 仓库、Skill 与 MCP：
+
+| 登录 | 工作空间 |
+|---|---|
+| ![登录](docs/screenshots/01-login.png) | ![工作空间](docs/screenshots/02-workspaces.png) |
+
+| 飞书群绑定 | Git Repo 挂载 |
+|---|---|
+| ![飞书群绑定](docs/screenshots/12-workspace-chats.png) | ![Git Repo](docs/screenshots/11-workspace-repo.png) |
+
+**Skill / MCP 广场** —— 全局上传注册，按工作空间挂载（每空间最多 50 个 Skill）：
+
+| Skill 广场 | 工作空间 Skill 挂载 |
+|---|---|
+| ![Skill 广场](docs/screenshots/04-skills.png) | ![Skill 挂载](docs/screenshots/03-workspace-skills.png) |
+
+| MCP 广场 |
+|---|
+| ![MCP 广场](docs/screenshots/05-mcps.png) |
+
+**会话与可观测性** —— Agent 完整执行链路（模型思考 → 工具调用 → 结论）可回放，Span 级
+Trace 瀑布图带 token / 成本统计，Insights 聚合费用与工具耗时，支持错误率 / 延迟 / 成本告警：
+
+| 会话历史（含思考与工具调用） | Span 瀑布图 |
+|---|---|
+| ![会话历史](docs/screenshots/06-session-detail.png) | ![Span 瀑布图](docs/screenshots/08-trace-detail.png) |
+
+| Trace 列表 | Insights 聚合 | 监控告警 |
+|---|---|---|
+| ![Trace 观测](docs/screenshots/07-traces.png) | ![Insights](docs/screenshots/09-insights.png) | ![监控告警](docs/screenshots/10-monitoring.png) |
+
 ## 技术栈
 
 | 层 | 技术 |
